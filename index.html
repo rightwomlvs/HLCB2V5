@@ -1,0 +1,1396 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>單字閃卡</title>
+    <!-- 載入 Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 載入彩帶效果庫 -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+    <!-- 載入 QR Code 產生器 -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator/qrcode.js"></script>
+    <style>
+        /* 定義閃卡的翻轉效果 */
+        .flip-container {
+            perspective: 1000px;
+        }
+        .flipper {
+            transition: transform 0.6s;
+            transform-style: preserve-3d;
+            position: relative;
+        }
+        .flip-container.flipped .flipper {
+            transform: rotateY(180deg);
+        }
+        .front, .back {
+            backface-visibility: hidden;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            border-radius: 1.5rem;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            color: white;
+            text-align: center;
+            background: linear-gradient(135deg, var(--tw-gradient-from), var(--tw-gradient-to));
+        }
+        .front {
+            z-index: 2;
+            transform: rotateY(0deg);
+            --tw-gradient-from: #6366f1; /* Indigo-500 */
+            --tw-gradient-to: #4f46e5;   /* Indigo-600 */
+        }
+        .back {
+            transform: rotateY(180deg);
+            --tw-gradient-from: #a78bfa; /* Violet-400 */
+            --tw-gradient-to: #c4b5fd;   /* Violet-300 */
+        }
+        /* 答錯時的晃動動畫 */
+        @keyframes shake {
+            10%, 90% { transform: translate3d(-1px, 0, 0); }
+            20%, 80% { transform: translate3d(2px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+            40%, 60% { transform: translate3d(4px, 0, 0); }
+        }
+        .shake {
+            animation: shake 0.82s cubic-bezier(.36,.07,.19,.97) both;
+        }
+        .timer-highlight {
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            50% { transform: scale(1.1); }
+        }
+        .speak-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+         /* 列表動畫 */
+        .list-item {
+            transition: all 0.3s ease-out;
+            opacity: 1;
+            transform: translateX(0);
+        }
+        .list-item.removing {
+            opacity: 0;
+            transform: translateX(100%);
+        }
+        #qrcode-container img {
+            margin: auto;
+            border: 6px solid white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col items-center p-4 sm:p-8 font-sans">
+
+    <!-- 主選單：新增單字 & 模式選擇 -->
+    <div id="main-menu" class="w-full max-w-2xl bg-white p-6 rounded-3xl shadow-2xl transition-all duration-500">
+        <h1 id="main-title" class="text-4xl font-extrabold text-center text-gray-900 mb-6"></h1>
+        
+        <!-- 模式選擇區塊 -->
+        <div id="mode-selection-section">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold text-gray-800">選擇學習模式</h2>
+                <div class="text-right">
+                    <p class="text-sm text-gray-500">極速挑戰最高分</p>
+                    <p id="highscore-display" class="text-lg font-bold text-amber-500">0</p>
+                </div>
+            </div>
+            <!-- 單字範圍與隨機出題選擇 -->
+            <div id="settings-container" class="my-4 p-4 bg-gray-100 rounded-2xl space-y-3">
+                <div class="flex items-center justify-center gap-4">
+                    <label for="start-range" class="font-semibold text-gray-700">單字範圍:</label>
+                    <input type="number" id="start-range" min="1" class="w-20 p-2 border border-gray-300 rounded-lg text-center" placeholder="從">
+                    <span class="font-semibold text-gray-700">-</span>
+                    <input type="number" id="end-range" min="1" class="w-20 p-2 border border-gray-300 rounded-lg text-center" placeholder="到">
+                </div>
+                <div class="flex items-center justify-center gap-4">
+                    <input type="checkbox" id="random-questions-checkbox" class="h-5 w-5 rounded text-indigo-600 focus:ring-indigo-500 border-gray-300">
+                    <label for="random-questions-checkbox" class="font-semibold text-gray-700">隨機出題:</label>
+                    <input type="number" id="random-questions-count" min="1" class="w-20 p-2 border border-gray-300 rounded-lg text-center disabled:bg-gray-200 disabled:cursor-not-allowed" placeholder="題數" disabled>
+                    <span class="font-semibold text-gray-700">題</span>
+                </div>
+            </div>
+            
+            <!-- 主要功能 -->
+            <div class="mb-4">
+                <h3 class="text-lg font-semibold text-gray-600 mb-3 text-center border-b pb-2">主要功能</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <button data-mode="review" class="mode-btn bg-sky-500 hover:bg-sky-600">複習模式</button>
+                    <button data-mode="zh-en" class="mode-btn bg-teal-500 hover:bg-teal-600 relative">
+                        中翻英測驗
+                        <span class="crown-icon hidden absolute -top-2 -right-1 text-4xl" style="transform: rotate(15deg);">👑</span>
+                    </button>
+                    <button data-mode="en-zh" class="mode-btn bg-amber-500 hover:bg-amber-600 relative">
+                        英翻中測驗
+                        <span class="crown-icon hidden absolute -top-2 -right-1 text-4xl" style="transform: rotate(15deg);">👑</span>
+                    </button>
+                    <button data-mode="listen" class="mode-btn bg-rose-500 hover:bg-rose-600 relative">
+                        聽力測驗
+                        <span class="crown-icon hidden absolute -top-2 -right-1 text-4xl" style="transform: rotate(15deg);">👑</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 補充功能 -->
+            <div class="mb-4">
+                <h3 class="text-lg font-semibold text-gray-600 mb-3 text-center border-b pb-2">補充功能</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <button data-mode="hard" class="mode-btn bg-red-700 hover:bg-red-800">🧠 困難單字複習</button>
+                    <button data-mode="speed" class="mode-btn bg-slate-700 hover:bg-slate-800">⚡ 極速挑戰 ⚡</button>
+                </div>
+            </div>
+            
+            <!-- 教師工具 -->
+            <div id="teacher-tools" class="mt-8 pt-4 border-t flex justify-end items-center gap-3">
+                 <button id="share-game-btn" class="text-white font-semibold py-2 px-5 rounded-full transition-transform hover:scale-105 bg-violet-500 hover:bg-violet-600 text-sm">🔗 分享</button>
+                 <button id="manage-words-btn" class="text-white font-semibold py-2 px-5 rounded-full transition-transform hover:scale-105 bg-gray-500 hover:bg-gray-600 text-sm">⚙️ 管理</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 單字管理介面 (預設隱藏) -->
+    <div id="word-management-view" class="hidden w-full max-w-4xl bg-white p-6 rounded-3xl shadow-2xl">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-3xl font-bold text-gray-800">單字列表管理</h2>
+            <button id="back-to-modes-from-manage-btn" class="bg-gray-200 text-gray-800 p-3 rounded-full hover:bg-gray-300 transition-colors">
+                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+        </div>
+        
+        <!-- 標題設定區塊 -->
+        <div class="mb-6 p-4 bg-gray-50 rounded-2xl">
+            <h3 class="text-xl font-semibold mb-4 text-gray-700">標題設定</h3>
+            <div class="flex items-center gap-4">
+                <input type="text" id="book-input" class="w-full p-2 border border-gray-300 rounded-lg" placeholder="冊次 (例如 B3)">
+                <input type="text" id="lesson-input" class="w-full p-2 border border-gray-300 rounded-lg" placeholder="課次 (例如 L1)">
+                <button id="save-title-btn" class="bg-indigo-600 text-white font-bold py-2 px-6 rounded-full hover:bg-indigo-700 shrink-0 transition-colors">儲存標題</button>
+            </div>
+        </div>
+        
+        <!-- 新增單字區塊 -->
+        <div id="add-words-section" class="mb-6 p-4 bg-gray-50 rounded-2xl hidden">
+            <h3 class="text-xl font-semibold mb-4 text-gray-700">新增單字</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label for="english-words" class="block text-sm font-semibold text-gray-700 mb-2">英文 (每行一個)</label>
+                    <textarea id="english-words" rows="4" class="w-full p-3 border border-gray-300 rounded-xl"></textarea>
+                </div>
+                <div>
+                    <label for="chinese-explanations" class="block text-sm font-semibold text-gray-700 mb-2">中文 (每行一個)</label>
+                    <textarea id="chinese-explanations" rows="4" class="w-full p-3 border border-gray-300 rounded-xl"></textarea>
+                </div>
+            </div>
+             <div id="error-message" class="text-red-500 text-center font-semibold h-6 mt-2"></div>
+            <div class="flex justify-end gap-4 mt-2">
+                <button id="cancel-add-words-btn" class="bg-gray-200 text-gray-700 font-bold py-2 px-6 rounded-full hover:bg-gray-300">取消</button>
+                <button id="add-words-btn" class="bg-indigo-600 text-white font-bold py-2 px-6 rounded-full hover:bg-indigo-700">確認新增</button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            <button id="show-add-words-section-btn" class="w-full bg-green-500 text-white font-bold py-3 rounded-full hover:bg-green-600 transition-all">＋ 新增單字</button>
+            <button id="clear-all-words-btn" class="w-full bg-red-600 text-white font-bold py-3 rounded-full hover:bg-red-700 transition-all">🗑️ 清除所有單字</button>
+        </div>
+        
+        <!-- 單字列表容器 -->
+        <div id="word-list-container" class="space-y-2 max-h-[50vh] overflow-y-auto pr-2">
+            <!-- 單字會動態生成於此 -->
+        </div>
+    </div>
+
+
+    <!-- 學習介面 (預設隱藏) -->
+    <div id="learning-mode" class="hidden w-full max-w-2xl flex flex-col items-center transition-all duration-500">
+        <div class="w-full flex justify-between items-center mb-2">
+            <button id="back-to-menu-btn" class="bg-gray-200 text-gray-800 p-3 rounded-full hover:bg-gray-300 transition-colors">
+                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+            </button>
+            <h1 id="mode-title" class="text-3xl font-extrabold text-center text-gray-900"></h1>
+             <!-- 計時挑戰計分板 -->
+            <div id="speed-hud" class="hidden text-right">
+                 <p id="timer-display" class="text-2xl font-bold text-rose-500">60</p>
+                 <p id="score-display" class="text-lg font-semibold text-gray-700">得分: 0</p>
+            </div>
+            <div class="w-12 sm:w-20" id="hud-placeholder"></div> <!-- 用於對齊的空白 div -->
+        </div>
+        
+        <!-- 測驗進度條 -->
+        <div id="progress-bar-container" class="w-full max-w-lg my-4 hidden">
+            <div class="bg-gray-200 rounded-full h-3">
+                <div id="progress-bar" class="bg-teal-500 h-3 rounded-full transition-all duration-300 ease-in-out" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <!-- 閃卡主顯示區 -->
+        <div class="w-full max-w-lg h-80 sm:h-72 flex-grow flex items-center justify-center relative">
+            <div id="flashcard-container" class="flip-container w-full h-full transform transition-transform duration-300">
+                <div class="flipper w-full h-full">
+                    <div class="front flex flex-col justify-center items-center">
+                        <span id="front-display" class="text-5xl font-bold text-center"></span>
+                        <div class="absolute bottom-6 right-6 flex items-center gap-2">
+                            <button id="speak-slow-btn" class="speak-btn p-4 rounded-full bg-white/30 hover:bg-white/50 transition-colors hidden">
+                                <span class="h-8 w-8 flex items-center justify-center text-white text-2xl font-bold">慢</span>
+                            </button>
+                            <button id="speak-btn" class="speak-btn p-4 rounded-full bg-white/30 hover:bg-white/50 transition-colors hidden">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="back flex flex-col justify-center items-center">
+                        <span id="back-display" class="text-3xl font-light text-center px-4"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 提示功能區塊 -->
+        <div id="hint-section" class="w-full max-w-md mt-4 text-center hidden">
+            <button id="hint-btn" class="bg-amber-400 hover:bg-amber-500 text-amber-900 font-bold py-2 px-6 rounded-full transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed">💡 取得提示</button>
+            <p id="hint-display" class="mt-2 text-gray-600 font-semibold h-6"></p>
+        </div>
+        
+        <!-- 測驗區塊 -->
+        <div id="quiz-container" class="w-full max-w-md mt-4">
+            <form id="quiz-form" class="flex items-center gap-2">
+                <input id="answer-input" type="text" class="w-full p-4 border border-gray-300 rounded-full text-lg focus:ring-4 focus:ring-indigo-200 focus:border-indigo-500" placeholder="請輸入答案...">
+                <button type="submit" class="bg-indigo-600 text-white p-4 rounded-full hover:bg-indigo-700 shrink-0 disabled:bg-indigo-300 disabled:cursor-not-allowed">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                </button>
+            </form>
+            <div id="feedback-display" class="text-center mt-3 h-6 font-semibold"></div>
+        </div>
+
+        <!-- 答錯確認區塊 (間隔重複模式使用) -->
+        <div id="wrong-answer-feedback" class="hidden w-full max-w-md mt-4 flex flex-col items-center">
+            <p class="text-red-500 font-bold mb-4">答錯了！請記住正確答案，稍後會再出現。</p>
+            <button id="confirm-wrong-btn" class="bg-amber-500 text-white font-bold py-3 px-8 rounded-full hover:bg-amber-600 transition-colors">
+                下一題
+            </button>
+        </div>
+        
+        <!-- 極速挑戰結束畫面 -->
+        <div id="speed-result-view" class="hidden w-full max-w-md mt-4 flex flex-col items-center text-center">
+            <h2 class="text-3xl font-bold">時間到！</h2>
+            <p class="text-xl mt-2">你的得分是：<span id="final-score" class="font-bold text-indigo-600 text-2xl"></span></p>
+            <p id="new-highscore-msg" class="text-amber-500 font-semibold mt-1"></p>
+            <button id="play-again-btn" class="mt-6 bg-slate-700 text-white font-bold py-3 px-8 rounded-full hover:bg-slate-800 transition-colors">
+                再玩一次
+            </button>
+        </div>
+
+        <!-- 複習模式導覽 -->
+        <div id="review-nav-container" class="flex items-center justify-between w-full max-w-md mt-10 space-x-4">
+            <button id="prev-btn" class="nav-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <span id="progress-display" class="text-xl font-bold text-gray-700"></span>
+            <button id="next-btn" class="nav-btn bg-indigo-600 text-white hover:bg-indigo-700">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- 密碼輸入 Modal -->
+    <div id="password-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm">
+            <h3 class="text-2xl font-bold mb-4 text-gray-800">需要管理員密碼</h3>
+            <p class="text-gray-600 mb-6">請輸入密碼以進入單字管理頁面。</p>
+            <form id="password-form">
+                <input id="password-input" type="password" class="w-full p-3 border border-gray-300 rounded-lg text-lg focus:ring-4 focus:ring-indigo-200 focus:border-indigo-500" placeholder="請輸入密碼...">
+                <p id="password-error" class="text-red-500 text-sm h-5 mt-2"></p>
+                <div class="flex justify-end gap-4 mt-6">
+                    <button type="button" id="cancel-password-btn" class="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors">取消</button>
+                    <button type="submit" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">確認</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- 編輯單字 Modal -->
+    <div id="edit-word-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-lg">
+            <h3 class="text-2xl font-bold mb-6 text-gray-800">編輯單字</h3>
+            <div class="space-y-4">
+                <input type="hidden" id="edit-word-index">
+                <div>
+                    <label for="edit-english-input" class="block text-sm font-semibold text-gray-700 mb-1">英文</label>
+                    <input id="edit-english-input" type="text" class="w-full p-3 border border-gray-300 rounded-lg text-lg">
+                </div>
+                <div>
+                    <label for="edit-chinese-input" class="block text-sm font-semibold text-gray-700 mb-1">中文</label>
+                    <input id="edit-chinese-input" type="text" class="w-full p-3 border border-gray-300 rounded-lg text-lg">
+                </div>
+            </div>
+            <div class="flex justify-end gap-4 mt-8">
+                <button type="button" id="cancel-edit-btn" class="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors">取消</button>
+                <button type="button" id="save-edit-btn" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">儲存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 分享連結 Modal -->
+    <div id="share-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-lg">
+            <h3 class="text-2xl font-bold mb-4 text-gray-800">分享遊戲連結</h3>
+            <p class="text-gray-600 mb-6">請選擇分享選項，然後產生連結。</p>
+            <div class="my-4">
+                <label class="flex items-center text-lg">
+                    <input type="checkbox" id="lock-settings-checkbox" class="h-5 w-5 rounded text-indigo-600 focus:ring-indigo-500 border-gray-300">
+                    <span class="ml-3 text-gray-700">禁止學生變更設定 (鎖定範圍與題數)</span>
+                </label>
+            </div>
+
+            <button id="generate-link-btn" class="w-full mb-4 bg-indigo-600 text-white font-bold py-3 rounded-lg hover:bg-indigo-700 transition-colors disabled:bg-indigo-400">
+                產生分享連結
+            </button>
+
+            <div id="share-result-container" class="hidden">
+                <p class="text-sm text-gray-500 mb-2">連結已產生：</p>
+                <div class="flex items-center gap-2">
+                    <input id="share-link-input" type="text" readonly class="w-full p-3 border border-gray-300 rounded-lg bg-gray-100">
+                    <button id="copy-link-btn" class="px-6 py-3 bg-violet-600 text-white rounded-lg hover:bg-violet-700 shrink-0">複製</button>
+                </div>
+                <p id="copy-feedback" class="text-green-600 text-sm h-5 mt-2 text-center font-semibold"></p>
+                <div id="qrcode-container" class="mt-4 flex justify-center"></div>
+            </div>
+            
+            <div class="flex justify-end mt-4">
+                <button type="button" id="close-share-modal-btn" class="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors">關閉</button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- 清除確認 Modal -->
+    <div id="confirm-clear-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm">
+            <h3 class="text-2xl font-bold mb-4 text-gray-800">確認操作</h3>
+            <p class="text-gray-600 mb-6">您確定要清除所有單字嗎？此操作無法復原。</p>
+            <div class="flex justify-end gap-4 mt-6">
+                <button type="button" id="cancel-clear-btn" class="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors">取消</button>
+                <button type="button" id="confirm-clear-btn" class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">確認清除</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 單字刪除確認 Modal -->
+    <div id="confirm-delete-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm">
+            <h3 class="text-2xl font-bold mb-4 text-gray-800">確認刪除</h3>
+            <p class="text-gray-600 mb-6">您確定要刪除單字 "<span id="word-to-delete" class="font-bold"></span>" 嗎？此操作無法復原。</p>
+            <div class="flex justify-end gap-4 mt-6">
+                <button type="button" id="cancel-delete-btn" class="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors">取消</button>
+                <button type="button" id="confirm-delete-btn" class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">確認刪除</button>
+            </div>
+        </div>
+    </div>
+
+    <footer class="fixed bottom-4 right-4 text-xs text-gray-500 text-right z-50">
+        <p>遊戲設計者：新竹縣精華國中藍星宇</p>
+        <p>FB教育社群：<a href="https://www.facebook.com/groups/1554372228718393" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline">萬物皆數</a></p>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // DOM 元素
+            const mainMenu = document.getElementById('main-menu');
+            const mainTitle = document.getElementById('main-title');
+            const learningMode = document.getElementById('learning-mode');
+            const modeSelectionSection = document.getElementById('mode-selection-section');
+            const highscoreDisplay = document.getElementById('highscore-display');
+            const settingsContainer = document.getElementById('settings-container');
+            const startRangeInput = document.getElementById('start-range');
+            const endRangeInput = document.getElementById('end-range');
+            const teacherTools = document.getElementById('teacher-tools');
+            const manageWordsBtn = document.getElementById('manage-words-btn');
+            const shareGameBtn = document.getElementById('share-game-btn');
+            const randomQuestionsCheckbox = document.getElementById('random-questions-checkbox');
+            const randomQuestionsCountInput = document.getElementById('random-questions-count');
+            
+            // 單字管理介面
+            const wordManagementView = document.getElementById('word-management-view');
+            const bookInput = document.getElementById('book-input');
+            const lessonInput = document.getElementById('lesson-input');
+            const saveTitleBtn = document.getElementById('save-title-btn');
+            const backToModesFromManageBtn = document.getElementById('back-to-modes-from-manage-btn');
+            const addWordsSection = document.getElementById('add-words-section');
+            const showAddWordsSectionBtn = document.getElementById('show-add-words-section-btn');
+            const clearAllWordsBtn = document.getElementById('clear-all-words-btn');
+            const englishWordsInput = document.getElementById('english-words');
+            const chineseExplanationsInput = document.getElementById('chinese-explanations');
+            const errorMessage = document.getElementById('error-message');
+            const addWordsBtn = document.getElementById('add-words-btn');
+            const cancelAddWordsBtn = document.getElementById('cancel-add-words-btn');
+            const wordListContainer = document.getElementById('word-list-container');
+            
+            // 學習介面
+            const flashcardContainer = document.getElementById('flashcard-container');
+            const frontDisplay = document.getElementById('front-display');
+            const backDisplay = document.getElementById('back-display');
+            const speakBtn = document.getElementById('speak-btn');
+            const speakSlowBtn = document.getElementById('speak-slow-btn');
+            const modeTitle = document.getElementById('mode-title');
+            const backToMenuBtn = document.getElementById('back-to-menu-btn');
+            const progressBarContainer = document.getElementById('progress-bar-container');
+            const progressBar = document.getElementById('progress-bar');
+            
+            // 測驗相關
+            const quizContainer = document.getElementById('quiz-container');
+            const quizForm = document.getElementById('quiz-form');
+            const answerInput = document.getElementById('answer-input');
+            const submitBtn = quizForm.querySelector('button[type="submit"]');
+            const feedbackDisplay = document.getElementById('feedback-display');
+            const wrongAnswerFeedback = document.getElementById('wrong-answer-feedback');
+            const confirmWrongBtn = document.getElementById('confirm-wrong-btn');
+            const hintSection = document.getElementById('hint-section');
+            const hintBtn = document.getElementById('hint-btn');
+            const hintDisplay = document.getElementById('hint-display');
+            
+            // 複習模式導覽
+            const reviewNavContainer = document.getElementById('review-nav-container');
+            const prevBtn = document.getElementById('prev-btn');
+            const nextBtn = document.getElementById('next-btn');
+            const progressDisplay = document.getElementById('progress-display');
+
+            // 極速挑戰
+            const speedHud = document.getElementById('speed-hud');
+            const hudPlaceholder = document.getElementById('hud-placeholder');
+            const timerDisplay = document.getElementById('timer-display');
+            const scoreDisplay = document.getElementById('score-display');
+            const speedResultView = document.getElementById('speed-result-view');
+            const finalScore = document.getElementById('final-score');
+            const newHighscoreMsg = document.getElementById('new-highscore-msg');
+            const playAgainBtn = document.getElementById('play-again-btn');
+
+            // Modals
+            const passwordModal = document.getElementById('password-modal');
+            const passwordForm = document.getElementById('password-form');
+            const passwordInput = document.getElementById('password-input');
+            const passwordError = document.getElementById('password-error');
+            const cancelPasswordBtn = document.getElementById('cancel-password-btn');
+            const editWordModal = document.getElementById('edit-word-modal');
+            const editWordIndexInput = document.getElementById('edit-word-index');
+            const editEnglishInput = document.getElementById('edit-english-input');
+            const editChineseInput = document.getElementById('edit-chinese-input');
+            const saveEditBtn = document.getElementById('save-edit-btn');
+            const cancelEditBtn = document.getElementById('cancel-edit-btn');
+            const shareModal = document.getElementById('share-modal');
+            const lockSettingsCheckbox = document.getElementById('lock-settings-checkbox');
+            const generateLinkBtn = document.getElementById('generate-link-btn');
+            const shareResultContainer = document.getElementById('share-result-container');
+            const shareLinkInput = document.getElementById('share-link-input');
+            const copyLinkBtn = document.getElementById('copy-link-btn');
+            const copyFeedback = document.getElementById('copy-feedback');
+            const closeShareModalBtn = document.getElementById('close-share-modal-btn');
+            const qrcodeContainer = document.getElementById('qrcode-container');
+            const confirmClearModal = document.getElementById('confirm-clear-modal');
+            const cancelClearBtn = document.getElementById('cancel-clear-btn');
+            const confirmClearBtn = document.getElementById('confirm-clear-btn');
+            const confirmDeleteModal = document.getElementById('confirm-delete-modal');
+            const wordToDeleteSpan = document.getElementById('word-to-delete');
+            const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+            const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+
+            // --- 內建合成音效設定 (取代外部 mp3 檔案) ---
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            const audioCtx = new AudioContext();
+
+            const playSyntheticSound = (type) => {
+                // 如果音訊上下文被暫停，則恢復它 (瀏覽器安全性限制)
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+
+                const now = audioCtx.currentTime;
+
+                if (type === 'correct') {
+                    // 答對音效：明亮的雙頻率叮咚聲
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(523.25, now); // C5
+                    oscillator.frequency.exponentialRampToValueAtTime(880, now + 0.1); // 向上滑音
+                    gainNode.gain.setValueAtTime(0.5, now);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                    oscillator.start(now);
+                    oscillator.stop(now + 0.3);
+                } else if (type === 'wrong') {
+                    // 答錯音效：低沉的嗡嗡聲
+                    oscillator.type = 'triangle';
+                    oscillator.frequency.setValueAtTime(250, now);
+                    oscillator.frequency.exponentialRampToValueAtTime(150, now + 0.3); // 向下滑音
+                    gainNode.gain.setValueAtTime(0.5, now);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                    oscillator.start(now);
+                    oscillator.stop(now + 0.3);
+                }
+                
+                // 回傳 Promise 以相容原本的 .play().catch() 寫法
+                return Promise.resolve();
+            };
+
+            const correctSound = { play: () => playSyntheticSound('correct') };
+            const wrongSound = { play: () => playSyntheticSound('wrong') };
+
+            // 應用程式狀態
+            let words = [];
+            let quizQueue = [];
+            let wordsForCurrentMode = [];
+            let quizIncorrectCount = 0;
+            let currentCardIndex = 0; 
+            let currentMode = '';
+            let completionStatus = {};
+            let bookTitle = '';
+            let lessonTitle = '';
+            let indexToDelete = -1;
+            const MANAGE_PASSWORD = 'MLVS';
+            let highScore = 0;
+            let currentScore = 0;
+            let timerInterval;
+            let timeLeft = 60;
+            let currentSpeedCard = null;
+            let currentSpeedQuestionType = '';
+
+            const modeDetails = {
+                'review': { title: '複習模式' }, 'zh-en': { title: '中翻英測驗' },
+                'en-zh': { title: '英翻中測驗' }, 'listen': { title: '聽力測驗' },
+                'speed': { title: '極速挑戰' }, 'hard': { title: '困難單字複習' },
+            };
+
+            // --- 視圖管理 ---
+            const showView = (view) => {
+                mainMenu.classList.toggle('hidden', view !== 'menu');
+                learningMode.classList.toggle('hidden', view !== 'learning');
+                wordManagementView.classList.toggle('hidden', view !== 'manage');
+            };
+            
+            const updateMainTitle = () => {
+                if (bookTitle && lessonTitle) {
+                    mainTitle.textContent = `${bookTitle} ${lessonTitle} 單字閃卡`;
+                } else {
+                    mainTitle.textContent = '單字閃卡';
+                }
+            };
+
+            // --- 資料處理 ---
+            const saveWordsToStorage = () => {
+                localStorage.setItem('flashcards', JSON.stringify(words));
+            };
+            const shuffleArray = (array) => {
+                for (let i = array.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [array[i], array[j]] = [array[j], array[i]];
+                }
+                return array;
+            };
+
+            // --- 單字管理功能 ---
+            const renderWordList = () => {
+                wordListContainer.innerHTML = '';
+                // 移除字母排序，直接按照陣列順序渲染
+                words.forEach((word, index) => {
+                    const item = document.createElement('div');
+                    item.className = 'list-item p-3 bg-gray-100 rounded-lg flex items-center justify-between';
+                    item.innerHTML = `
+                        <div class="flex items-center">
+                            <span class="w-8 text-sm text-gray-500">${index + 1}.</span>
+                            <p class="font-semibold text-gray-800">${word.english}</p>
+                            <p class="text-gray-600 ml-4">${word.chinese}</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button data-index="${index}" class="edit-btn p-2 text-blue-500 hover:bg-blue-100 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd" /></svg></button>
+                            <button data-index="${index}" class="delete-btn p-2 text-red-500 hover:bg-red-100 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" /></svg></button>
+                        </div>
+                    `;
+                    wordListContainer.appendChild(item);
+                });
+            };
+
+            wordListContainer.addEventListener('click', (e) => {
+                const button = e.target.closest('button');
+                if (!button) return;
+                const index = parseInt(button.dataset.index, 10);
+                if (button.classList.contains('edit-btn')) {
+                    editWordIndexInput.value = index;
+                    editEnglishInput.value = words[index].english;
+                    editChineseInput.value = words[index].chinese;
+                    editWordModal.classList.remove('hidden');
+                } else if (button.classList.contains('delete-btn')) {
+                    indexToDelete = index;
+                    wordToDeleteSpan.textContent = words[index].english;
+                    confirmDeleteModal.classList.remove('hidden');
+                }
+            });
+
+            saveEditBtn.addEventListener('click', () => {
+                const index = parseInt(editWordIndexInput.value, 10);
+                const newEnglish = editEnglishInput.value.trim();
+                const newChinese = editChineseInput.value.trim();
+                if (index >= 0 && newEnglish && newChinese) {
+                    words[index].english = newEnglish;
+                    words[index].chinese = newChinese;
+                    saveWordsToStorage();
+                    renderWordList();
+                    editWordModal.classList.add('hidden');
+                }
+            });
+            cancelEditBtn.addEventListener('click', () => editWordModal.classList.add('hidden'));
+
+            const handleAddWords = () => {
+                errorMessage.textContent = '';
+                const englishText = englishWordsInput.value.trim();
+                const chineseText = chineseExplanationsInput.value.trim();
+
+                if (!englishText || !chineseText) {
+                    errorMessage.textContent = '請填入英文單字和中文解釋。'; return;
+                }
+                const englishArray = englishText.split('\n').filter(line => line.trim() !== '');
+                const chineseArray = chineseText.split('\n').filter(line => line.trim() !== '');
+
+                if (englishArray.length !== chineseArray.length) {
+                    errorMessage.textContent = '英文單字和中文解釋的數量必須相同。'; return;
+                }
+
+                const newWords = englishArray.map((english, index) => ({
+                    english: english.trim(), chinese: chineseArray[index].trim(),
+                    proficiency: 0, incorrectCount: 0
+                }));
+                
+                words.push(...newWords);
+                saveWordsToStorage();
+                renderWordList();
+                englishWordsInput.value = '';
+                chineseExplanationsInput.value = '';
+                addWordsSection.classList.add('hidden');
+            };
+            addWordsBtn.addEventListener('click', handleAddWords);
+            showAddWordsSectionBtn.addEventListener('click', () => addWordsSection.classList.remove('hidden'));
+            cancelAddWordsBtn.addEventListener('click', () => addWordsSection.classList.add('hidden'));
+            
+            manageWordsBtn.addEventListener('click', () => {
+                passwordInput.value = '';
+                passwordError.textContent = '';
+                bookInput.value = bookTitle;
+                lessonInput.value = lessonTitle;
+                passwordModal.classList.remove('hidden');
+                setTimeout(() => passwordInput.focus(), 50);
+            });
+
+            backToModesFromManageBtn.addEventListener('click', () => {
+                initializeApp(); 
+                showView('menu');
+            });
+
+
+            // --- 學習模式核心邏輯 ---
+            const displayCard = () => {
+                if (wordsForCurrentMode.length === 0 && quizQueue.length === 0) return;
+
+                const updateCardContent = () => {
+                    const isReview = currentMode === 'review';
+                    const isSpeed = currentMode === 'speed';
+
+                    let card;
+                    if (isReview) {
+                        card = wordsForCurrentMode[currentCardIndex];
+                    } else if (isSpeed) {
+                        card = currentSpeedCard;
+                    } else {
+                        if (quizQueue.length === 0) return;
+                        card = quizQueue[0];
+                    }
+                    
+                    if (!isReview && !isSpeed) {
+                        setProgress(wordsForCurrentMode.length - quizQueue.length, wordsForCurrentMode.length);
+                    }
+
+                    flashcardContainer.style.cursor = 'default';
+                    [speakBtn, speakSlowBtn].forEach(btn => btn.classList.add('hidden'));
+                    feedbackDisplay.textContent = '';
+                    answerInput.value = '';
+                    answerInput.disabled = false;
+                    submitBtn.disabled = false;
+                    wrongAnswerFeedback.classList.add('hidden');
+                    quizContainer.classList.remove('hidden');
+                    speedResultView.classList.add('hidden');
+                    hintDisplay.textContent = '';
+                    hintBtn.disabled = false;
+
+                    let frontText, backText;
+                    
+                    if (isSpeed) {
+                         switch (currentSpeedQuestionType) {
+                            case 'zh-en': frontText = card.chinese; backText = card.english; break;
+                            case 'en-zh': frontText = card.english; backText = card.chinese; [speakBtn, speakSlowBtn].forEach(btn => btn.classList.remove('hidden')); break;
+                            case 'listen': frontText = '請聽發音'; backText = card.english; [speakBtn, speakSlowBtn].forEach(btn => btn.classList.remove('hidden')); speakWord(card.english, 0.75); break;
+                        }
+                    } else {
+                         switch (currentMode) {
+                            case 'review':
+                                frontText = card.english; backText = card.chinese;
+                                [speakBtn, speakSlowBtn].forEach(btn => btn.classList.remove('hidden'));
+                                flashcardContainer.style.cursor = 'pointer';
+                                progressDisplay.textContent = `第 ${currentCardIndex + 1}/${wordsForCurrentMode.length} 張`;
+                                prevBtn.disabled = currentCardIndex === 0;
+                                nextBtn.disabled = currentCardIndex === wordsForCurrentMode.length - 1;
+                                answerInput.placeholder = "請輸入中文答案...";
+                                break;
+                            case 'zh-en': case 'hard':
+                                frontText = card.chinese; backText = card.english; break;
+                            case 'en-zh':
+                                frontText = card.english; backText = card.chinese;
+                                [speakBtn, speakSlowBtn].forEach(btn => btn.classList.remove('hidden')); break;
+                            case 'listen':
+                                frontText = '請聽發音'; backText = card.english;
+                                [speakBtn, speakSlowBtn].forEach(btn => btn.classList.remove('hidden'));
+                                speakWord(card.english, 0.75); break;
+                        }
+                    }
+                    frontDisplay.textContent = frontText;
+                    backDisplay.textContent = backText;
+                    setTimeout(() => answerInput.focus(), 100);
+                };
+                
+                if (flashcardContainer.classList.contains('flipped')) {
+                    flashcardContainer.classList.remove('flipped');
+                    // Wait for the flip animation (0.6s) to mostly complete before changing content
+                    setTimeout(updateCardContent, 600); 
+                } else {
+                    updateCardContent();
+                }
+            };
+
+            const setupLearningView = (mode) => {
+                currentMode = mode;
+                modeTitle.textContent = modeDetails[mode].title;
+                const isReview = mode === 'review';
+                const isSpeed = mode === 'speed';
+                const isQuiz = !isReview && !isSpeed;
+
+                quizContainer.classList.remove('hidden');
+                reviewNavContainer.classList.toggle('hidden', !isReview);
+                progressBarContainer.classList.toggle('hidden', isReview || isSpeed);
+                speedHud.classList.toggle('hidden', !isSpeed);
+                hudPlaceholder.classList.toggle('hidden', isSpeed);
+                
+                const start = parseInt(startRangeInput.value, 10);
+                const end = parseInt(endRangeInput.value, 10);
+                
+                let wordPool;
+                // 1. First, determine the pool of words based on the range.
+                if (!isNaN(start) && !isNaN(end) && start > 0 && end >= start && end <= words.length) {
+                    wordPool = words.slice(start - 1, end);
+                } else {
+                    wordPool = [...words];
+                }
+
+                // 2. Then, determine the final word set for the mode.
+                if (mode === 'review') {
+                    // For review mode, ALWAYS use the full pool, ignoring random settings.
+                    wordsForCurrentMode = wordPool;
+                } else if (randomQuestionsCheckbox.checked) {
+                    const randomCount = parseInt(randomQuestionsCountInput.value, 10);
+                    if (!isNaN(randomCount) && randomCount > 0 && randomCount <= wordPool.length) {
+                        wordsForCurrentMode = shuffleArray([...wordPool]).slice(0, randomCount);
+                    } else {
+                        alert('請輸入有效的隨機題數。題數不能為零或超過所選範圍的單字總數。');
+                        return;
+                    }
+                } else {
+                    // For other modes without random, use the entire pool.
+                    wordsForCurrentMode = wordPool;
+                }
+
+                if (wordsForCurrentMode.length === 0) {
+                    alert("選定的範圍內沒有單字，請重新選擇或新增。");
+                    return;
+                }
+
+                if (mode === 'hard') {
+                    const hardWords = words.filter(w => w.incorrectCount > 0)
+                        .sort((a, b) => b.incorrectCount - a.incorrectCount).slice(0, 10);
+                    if (hardWords.length === 0) {
+                        alert('太棒了！目前沒有需要特別複習的困難單字。'); return;
+                    }
+                    wordsForCurrentMode = hardWords; 
+                    quizQueue = shuffleArray([...wordsForCurrentMode]);
+                } else if (isQuiz) {
+                    quizQueue = shuffleArray([...wordsForCurrentMode]);
+                }
+
+                quizIncorrectCount = 0;
+                updateHintButtonVisibility();
+                
+                if (isSpeed) startSpeedChallenge(wordsForCurrentMode);
+                else { currentCardIndex = 0; displayCard(); }
+                
+                showView('learning');
+            };
+
+            const checkAnswer = () => {
+                const userAnswer = answerInput.value.trim();
+                if (!userAnswer) return;
+
+                const isSpeed = currentMode === 'speed';
+                const isReview = currentMode === 'review';
+                
+                if (isSpeed && timeLeft <= 0) return;
+
+                const card = isReview ? wordsForCurrentMode[currentCardIndex] : (isSpeed ? currentSpeedCard : quizQueue[0]);
+                if (!card) return;
+
+                const wordIndex = words.findIndex(w => w.english === card.english && w.chinese === card.chinese);
+                
+                let correctAnswer;
+                let answerLang;
+                
+                if (isReview) {
+                    const isFlipped = flashcardContainer.classList.contains('flipped');
+                    if(isFlipped) { // Chinese side showing, user should type English
+                        correctAnswer = card.english.split('(')[0].trim();
+                        answerLang = 'en';
+                    } else { // English side showing, user should type Chinese
+                        correctAnswer = card.chinese.split('(')[0].trim();
+                        answerLang = 'zh';
+                    }
+                } else {
+                    let effectiveMode = currentMode;
+                    if (isSpeed) effectiveMode = currentSpeedQuestionType;
+                    if (currentMode === 'hard') effectiveMode = 'zh-en';
+                    switch (effectiveMode) {
+                        case 'zh-en': case 'listen':
+                            correctAnswer = card.english.split('(')[0].trim();
+                            answerLang = 'en';
+                            break;
+                        case 'en-zh':
+                            correctAnswer = card.chinese.split('(')[0].trim();
+                            answerLang = 'zh';
+                            break;
+                    }
+                }
+
+                let isCorrect;
+                if (answerLang === 'en') {
+                    const normalize = (str) => str.toLowerCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "").trim();
+                    isCorrect = normalize(userAnswer) === normalize(correctAnswer);
+                } else if (answerLang === 'zh') {
+                    const possibleAnswers = correctAnswer.split(/[;；]/).map(a => a.trim()); 
+                    isCorrect = possibleAnswers.some(ans => userAnswer.trim().includes(ans) && ans !== '');
+                }
+                
+                if (isCorrect) {
+                    correctSound.play().catch(e => console.warn('無法播放音效:', e));
+                    answerInput.disabled = true;
+                    submitBtn.disabled = true;
+                    feedbackDisplay.textContent = '答對了！';
+                    feedbackDisplay.classList.remove('text-red-500');
+                    feedbackDisplay.classList.add('text-green-600');
+                    triggerConfetti();
+                    
+                    if (!flashcardContainer.classList.contains('flipped')) {
+                        flashcardContainer.classList.add('flipped');
+                    }
+                    
+                    if (wordIndex !== -1) words[wordIndex].proficiency = (words[wordIndex].proficiency || 0) + 1;
+
+                    if (isSpeed) {
+                        currentScore++;
+                        scoreDisplay.textContent = `得分: ${currentScore}`;
+                        setTimeout(startSpeedCard, 500);
+                    } else if (!isReview) {
+                        quizQueue.shift();
+                        
+                        setTimeout(() => {
+                            if (quizQueue.length > 0) {
+                                displayCard();
+                            } else {
+                                feedbackDisplay.textContent = '恭喜你，全部完成了！';
+                                if (currentMode !== 'hard') {
+                                    completionStatus[currentMode] = true;
+                                    localStorage.setItem('completionStatus', JSON.stringify(completionStatus));
+                                    updateCompletionUI();
+                                }
+                                answerInput.disabled = true;
+                                submitBtn.disabled = true;
+                            }
+                        }, 1500);
+                    }
+                    
+                    if (isReview) {
+                        answerInput.disabled = false;
+                        submitBtn.disabled = false;
+                    }
+                } else { // Incorrect answer
+                    wrongSound.play().catch(e => console.warn('無法播放音效:', e));
+                    quizIncorrectCount++; 
+                    updateHintButtonVisibility();
+                    answerInput.classList.add('shake');
+                    
+                    if (wordIndex !== -1) {
+                        words[wordIndex].proficiency = 0; 
+                        words[wordIndex].incorrectCount = (words[wordIndex].incorrectCount || 0) + 1;
+                    }
+                    
+                    if (isSpeed) {
+                        feedbackDisplay.textContent = '答錯了，再試一次！';
+                        feedbackDisplay.classList.add('text-red-500');
+                        setTimeout(() => { answerInput.classList.remove('shake'); feedbackDisplay.textContent = ''; }, 1000);
+                    } else if (isReview) {
+                        feedbackDisplay.textContent = '答錯了！';
+                        feedbackDisplay.classList.add('text-red-500');
+                        if (!flashcardContainer.classList.contains('flipped')) {
+                           flashcardContainer.classList.add('flipped');
+                        }
+                        setTimeout(() => { answerInput.classList.remove('shake'); }, 820);
+                    } else { // Other quiz modes
+                        answerInput.disabled = true;
+                        submitBtn.disabled = true;
+                        flashcardContainer.classList.add('flipped'); 
+                        quizContainer.classList.add('hidden');
+                        wrongAnswerFeedback.classList.remove('hidden');
+                        setTimeout(() => { answerInput.classList.remove('shake'); }, 820);
+                    }
+                }
+                if (!isSpeed) saveWordsToStorage();
+            };
+
+
+            const updateHintButtonVisibility = () => {
+                const isQuiz = currentMode !== 'review' && currentMode !== 'speed';
+                const shouldShow = isQuiz && quizIncorrectCount >= 2;
+                hintSection.classList.toggle('hidden', !shouldShow);
+            };
+            
+            confirmWrongBtn.addEventListener('click', () => {
+                const wrongCard = quizQueue.shift();
+                const reinsertIndex = Math.min(quizQueue.length, 3);
+                quizQueue.splice(reinsertIndex, 0, wrongCard);
+                displayCard();
+            });
+
+            // --- 極速挑戰專用 ---
+            const startSpeedCard = () => {
+                if (wordsForCurrentMode.length > 0) {
+                    currentSpeedCard = wordsForCurrentMode[Math.floor(Math.random() * wordsForCurrentMode.length)];
+                    const speedQuestionTypes = ['zh-en', 'en-zh', 'listen'];
+                    currentSpeedQuestionType = speedQuestionTypes[Math.floor(Math.random() * speedQuestionTypes.length)];
+                    displayCard();
+                }
+            };
+            
+            const startSpeedChallenge = (wordSet) => {
+                currentScore = 0; timeLeft = 60;
+                wordsForCurrentMode = wordSet || words;
+                scoreDisplay.textContent = `得分: 0`; timerDisplay.textContent = timeLeft;
+                timerDisplay.classList.remove('timer-highlight', 'text-red-500');
+                clearInterval(timerInterval);
+                timerInterval = setInterval(updateTimer, 1000);
+                startSpeedCard();
+            };
+
+            const updateTimer = () => {
+                timeLeft--;
+                timerDisplay.textContent = timeLeft;
+                if (timeLeft <= 10) {
+                    timerDisplay.classList.add('timer-highlight', 'text-red-500');
+                }
+                if (timeLeft <= 0) {
+                    endSpeedChallenge();
+                }
+            };
+
+            const endSpeedChallenge = () => {
+                clearInterval(timerInterval);
+                answerInput.disabled = true; submitBtn.disabled = true;
+                quizContainer.classList.add('hidden'); speedResultView.classList.remove('hidden');
+                finalScore.textContent = currentScore;
+                
+                if(currentScore > highScore) {
+                    highScore = currentScore;
+                    localStorage.setItem('flashcardsHighScore', highScore);
+                    newHighscoreMsg.textContent = '新高分！🎉';
+                    highscoreDisplay.textContent = highScore;
+                } else {
+                    newHighscoreMsg.textContent = '';
+                }
+            };
+
+            playAgainBtn.addEventListener('click', () => startSpeedChallenge(wordsForCurrentMode));
+
+            // --- 其他輔助函式 ---
+            const setProgress = (completed, total) => {
+                const percentage = total > 0 ? (completed / total) * 100 : 0;
+                progressBar.style.width = `${percentage}%`;
+            };
+
+            const triggerConfetti = () => {
+                confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
+            };
+
+            const speakWord = (word, rate) => {
+                 if ('speechSynthesis' in window) {
+                    if (window.speechSynthesis.speaking) { return; }
+                    const wordToSpeak = word.split('(')[0].trim();
+                    const utterance = new SpeechSynthesisUtterance(wordToSpeak);
+                    utterance.lang = 'en-US';
+                    utterance.rate = rate;
+                    window.speechSynthesis.speak(utterance);
+                }
+            };
+            
+            const getCurrentWordToSpeak = () => {
+                if (currentMode === 'speed' && currentSpeedCard) return currentSpeedCard.english;
+                if (currentMode === 'review' && wordsForCurrentMode[currentCardIndex]) return wordsForCurrentMode[currentCardIndex].english;
+                if (quizQueue.length > 0) return quizQueue[0].english;
+                return '';
+            };
+
+            const updateCompletionUI = () => {
+                document.querySelectorAll('.mode-btn[data-mode]').forEach(btn => {
+                    const mode = btn.dataset.mode;
+                    const crown = btn.querySelector('.crown-icon');
+                    if (crown) crown.classList.toggle('hidden', !completionStatus[mode]);
+                });
+            };
+
+            const generateQRCode = (text) => {
+                qrcodeContainer.innerHTML = '';
+                try {
+                    const typeNumber = 4;
+                    const errorCorrectionLevel = 'L';
+                    const qr = qrcode(typeNumber, errorCorrectionLevel);
+                    qr.addData(text);
+                    qr.make();
+                    qrcodeContainer.innerHTML = qr.createImgTag(6, 12);
+                } catch(e) {
+                    console.error("QR Code generation failed:", e);
+                    qrcodeContainer.textContent = 'QR碼產生失敗，網址可能過長。';
+                }
+            };
+
+            // --- 事件監聽 ---
+            document.querySelectorAll('.mode-btn[data-mode]').forEach(btn => {
+                btn.addEventListener('click', () => setupLearningView(btn.dataset.mode));
+            });
+            backToMenuBtn.addEventListener('click', () => { clearInterval(timerInterval); showView('menu'); });
+            
+            flashcardContainer.addEventListener('click', () => {
+                if (currentMode === 'review') {
+                    flashcardContainer.classList.toggle('flipped');
+                    const isFlipped = flashcardContainer.classList.contains('flipped');
+                    answerInput.placeholder = isFlipped ? "請輸入英文答案..." : "請輸入中文答案...";
+                    answerInput.value = '';
+                    feedbackDisplay.textContent = '';
+                    setTimeout(() => answerInput.focus(), 100);
+                }
+            });
+
+            prevBtn.addEventListener('click', () => { if (currentCardIndex > 0) { currentCardIndex--; displayCard(); }});
+            nextBtn.addEventListener('click', () => { if (currentCardIndex < wordsForCurrentMode.length - 1) { currentCardIndex++; displayCard(); }});
+            quizForm.addEventListener('submit', (e) => { e.preventDefault(); checkAnswer(); });
+            speakBtn.addEventListener('click', (e) => { e.stopPropagation(); const word = getCurrentWordToSpeak(); if(word) speakWord(word, 0.75); });
+            speakSlowBtn.addEventListener('click', (e) => { e.stopPropagation(); const word = getCurrentWordToSpeak(); if(word) speakWord(word, 0.2); });
+            hintBtn.addEventListener('click', () => {
+                const card = currentMode === 'speed' ? currentSpeedCard : quizQueue[0];
+                if (!card) return;
+                const questionType = currentMode === 'speed' ? currentSpeedQuestionType : (currentMode === 'hard' ? 'zh-en' : currentMode);
+                let correctAnswer;
+                switch (questionType) {
+                    case 'zh-en': case 'listen': correctAnswer = card.english.split('(')[0].trim(); break;
+                    case 'en-zh': correctAnswer = card.chinese.split('(')[0].trim(); break;
+                    default: return;
+                }
+                if (correctAnswer) {
+                    hintDisplay.textContent = `提示：答案以 '${correctAnswer[0]}' 開頭。`;
+                    hintBtn.disabled = true;
+                }
+            });
+
+            passwordForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                if (passwordInput.value === MANAGE_PASSWORD) {
+                    passwordModal.classList.add('hidden');
+                    renderWordList();
+                    showView('manage');
+                } else {
+                    passwordError.textContent = '密碼錯誤！';
+                    setTimeout(() => { passwordError.textContent = ''}, 2000);
+                }
+            });
+            cancelPasswordBtn.addEventListener('click', () => passwordModal.classList.add('hidden'));
+
+            saveTitleBtn.addEventListener('click', () => {
+                const newBook = bookInput.value.trim();
+                const newLesson = lessonInput.value.trim();
+                if (newBook && newLesson) {
+                    bookTitle = newBook;
+                    lessonTitle = newLesson;
+                    localStorage.setItem('flashcardsBookTitle', bookTitle);
+                    localStorage.setItem('flashcardsLessonTitle', lessonTitle);
+                    updateMainTitle();
+                    // Simple feedback
+                    const originalText = saveTitleBtn.textContent;
+                    saveTitleBtn.textContent = '已儲存!';
+                    saveTitleBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                    saveTitleBtn.classList.add('bg-green-500', 'hover:bg-green-600');
+                    setTimeout(() => {
+                        saveTitleBtn.textContent = originalText;
+                        saveTitleBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
+                        saveTitleBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+                    }, 2000);
+                } else {
+                    alert('冊次和課次不能為空！');
+                }
+            });
+            
+            shareGameBtn.addEventListener('click', () => {
+                shareResultContainer.classList.add('hidden');
+                shareLinkInput.value = '';
+                copyFeedback.textContent = '';
+                qrcodeContainer.innerHTML = '';
+                generateLinkBtn.textContent = '產生分享連結';
+                generateLinkBtn.disabled = false;
+                shareModal.classList.remove('hidden');
+            });
+
+            generateLinkBtn.addEventListener('click', async () => {
+                generateLinkBtn.textContent = '產生中...';
+                generateLinkBtn.disabled = true;
+                
+                 try {
+                    const wordsString = JSON.stringify(words);
+                    const base64Words = btoa(unescape(encodeURIComponent(wordsString))); 
+                    const start = startRangeInput.value || '';
+                    const end = endRangeInput.value || '';
+                    const isLocked = lockSettingsCheckbox.checked;
+                    
+                    const baseUrl = window.location.href.split('?')[0];
+                    const url = new URL(baseUrl);
+
+                    url.searchParams.set('data', base64Words);
+                    if (start) url.searchParams.set('start', start);
+                    if (end) url.searchParams.set('end', end);
+                    if (isLocked) {
+                        url.searchParams.set('lock', 'true');
+                        if(randomQuestionsCheckbox.checked) {
+                            const randomCount = randomQuestionsCountInput.value;
+                            if(randomCount) url.searchParams.set('random', randomCount);
+                        }
+                    }
+
+                    const longUrl = url.toString();
+                    
+                    // 使用TinyURL API縮短網址
+                    const response = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}`);
+                    if (response.ok) {
+                        const shortUrl = await response.text();
+                        shareLinkInput.value = shortUrl;
+                        generateQRCode(shortUrl);
+                    } else {
+                        // 如果API失敗，則退回使用長網址
+                        shareLinkInput.value = longUrl;
+                        generateQRCode(longUrl);
+                        copyFeedback.textContent = '縮短網址失敗，已產生原始連結。';
+                    }
+
+                    shareResultContainer.classList.remove('hidden');
+
+                } catch (error) {
+                    console.error("產生分享連結時發生錯誤:", error);
+                    alert("產生分享連結時發生錯誤，可能是網路問題或單字列表過大。");
+                } finally {
+                    generateLinkBtn.textContent = '重新產生';
+                    generateLinkBtn.disabled = false;
+                }
+            });
+
+
+            copyLinkBtn.addEventListener('click', () => {
+                shareLinkInput.select();
+                shareLinkInput.setSelectionRange(0, 99999); // 兼容移動設備
+                try {
+                    document.execCommand('copy');
+                    copyFeedback.textContent = '已成功複製！';
+                    setTimeout(() => { copyFeedback.textContent = ''; }, 2000);
+                } catch (err) {
+                    console.error('複製失敗: ', err);
+                    copyFeedback.textContent = '複製失敗！';
+                }
+            });
+            closeShareModalBtn.addEventListener('click', () => {
+                shareModal.classList.add('hidden');
+            });
+
+            clearAllWordsBtn.addEventListener('click', () => {
+                confirmClearModal.classList.remove('hidden');
+            });
+
+            cancelClearBtn.addEventListener('click', () => {
+                confirmClearModal.classList.add('hidden');
+            });
+
+            confirmClearBtn.addEventListener('click', () => {
+                words = [];
+                saveWordsToStorage();
+                renderWordList();
+                confirmClearModal.classList.add('hidden');
+            });
+
+            cancelDeleteBtn.addEventListener('click', () => {
+                confirmDeleteModal.classList.add('hidden');
+                indexToDelete = -1;
+            });
+
+            confirmDeleteBtn.addEventListener('click', () => {
+                if (indexToDelete > -1) {
+                    const allDeleteButtons = wordListContainer.querySelectorAll('.delete-btn');
+                    let itemElement = null;
+                    allDeleteButtons.forEach(btn => {
+                        if(parseInt(btn.dataset.index, 10) === indexToDelete) {
+                            itemElement = btn.closest('.list-item');
+                        }
+                    });
+
+                    if (itemElement) {
+                        itemElement.classList.add('removing');
+                    }
+                    
+                    setTimeout(() => {
+                        if (indexToDelete > -1) { 
+                            words.splice(indexToDelete, 1);
+                            saveWordsToStorage();
+                            renderWordList();
+                        }
+                    }, 300);
+                }
+                confirmDeleteModal.classList.add('hidden');
+                indexToDelete = -1;
+            });
+            
+            randomQuestionsCheckbox.addEventListener('change', () => {
+                randomQuestionsCountInput.disabled = !randomQuestionsCheckbox.checked;
+                if (!randomQuestionsCheckbox.checked) {
+                    randomQuestionsCountInput.value = '';
+                } else {
+                    randomQuestionsCountInput.focus();
+                }
+            });
+
+            const updateRandomCountMax = () => {
+                const start = parseInt(startRangeInput.value, 10) || 1;
+                const end = parseInt(endRangeInput.value, 10) || words.length;
+                if (end >= start) {
+                    const rangeSize = end - start + 1;
+                    randomQuestionsCountInput.max = rangeSize;
+                }
+            };
+            startRangeInput.addEventListener('input', updateRandomCountMax);
+            endRangeInput.addEventListener('input', updateRandomCountMax);
+
+
+            // --- 應用程式初始化 ---
+            const initializeApp = () => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const sharedData = urlParams.get('data');
+                let loadedFromUrl = false;
+
+                if (sharedData) {
+                    try {
+                        const decodedWordsString = decodeURIComponent(escape(atob(sharedData)));
+                        const sharedWords = JSON.parse(decodedWordsString);
+                        if (Array.isArray(sharedWords) && sharedWords.length > 0) {
+                            words = sharedWords.map(word => ({ ...word, proficiency: 0, incorrectCount: 0 }));
+                            saveWordsToStorage();
+                            loadedFromUrl = true;
+                        }
+                    } catch (error) {
+                        console.error("無法從 URL 解析分享的資料:", error);
+                    }
+                }
+                
+                if (!loadedFromUrl) {
+                    const storedWords = localStorage.getItem('flashcards');
+                    if (storedWords && JSON.parse(storedWords).length > 0) {
+                        words = JSON.parse(storedWords).map(word => ({ ...word, proficiency: word.proficiency || 0, incorrectCount: word.incorrectCount || 0 }));
+                    } else {
+                        const defaultWords = [
+                            { english: 'yesterday (adv.)', chinese: '昨天' }, { english: 'study (v.)', chinese: '研讀' },
+                            { english: 'jog (v.)', chinese: '慢跑' }, { english: 'watch (v.)', chinese: '觀看' },
+                            { english: 'last (adj.)', chinese: '前一個的' }, { english: 'death (n.)', chinese: '死亡' },
+                            { english: 'a few (adj.)', chinese: '一些' }, { english: 'ago (adv.)', chinese: '以前' },
+                            { english: 'parents (n.)', chinese: '父母親' }, { english: 'were (v.)', chinese: '是 (複數/you/we/they)' },
+                            { english: 'was (v.)', chinese: '是 (單數/I/he/she)' }
+                        ];
+                        words = defaultWords.map(word => ({ ...word, proficiency: 0, incorrectCount: 0 }));
+                        saveWordsToStorage();
+                    }
+                }
+                
+                bookTitle = localStorage.getItem('flashcardsBookTitle') || 'B3';
+                lessonTitle = localStorage.getItem('flashcardsLessonTitle') || 'L1';
+                updateMainTitle();
+                
+                completionStatus = JSON.parse(localStorage.getItem('completionStatus')) || {};
+                updateCompletionUI();
+                highScore = parseInt(localStorage.getItem('flashcardsHighScore') || '0', 10);
+                highscoreDisplay.textContent = highScore;
+
+                const sharedStart = urlParams.get('start');
+                const sharedEnd = urlParams.get('end');
+                const sharedRandom = urlParams.get('random');
+                const isLocked = urlParams.get('lock') === 'true';
+
+                if (sharedStart) startRangeInput.value = sharedStart;
+                if (sharedEnd) endRangeInput.value = sharedEnd;
+                if (sharedRandom) {
+                    randomQuestionsCheckbox.checked = true;
+                    randomQuestionsCountInput.value = sharedRandom;
+                    randomQuestionsCountInput.disabled = false;
+                }
+                
+                if (isLocked) {
+                    settingsContainer.classList.add('opacity-50', 'pointer-events-none');
+                    teacherTools.classList.add('hidden');
+                }
+                
+                if (urlParams.has('data')) {
+                    history.replaceState(null, '', window.location.pathname);
+                }
+                
+                startRangeInput.max = words.length;
+                endRangeInput.max = words.length;
+                endRangeInput.placeholder = `到 ${words.length}`;
+                updateRandomCountMax();
+                showView('menu');
+            };
+            initializeApp();
+
+            // Append global styles
+            const style = document.createElement('style');
+            style.textContent = `
+                .mode-btn { color: white; font-weight: bold; padding: 1rem 1.5rem; border-radius: 1.5rem; transition: all 0.3s; transform: translateY(0); display: flex; justify-content: center; align-items: center; text-align: center; height: 100%;}
+                .mode-btn:hover { transform: translateY(-5px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); }
+                .nav-btn { background-color: #e5e7eb; color: #1f2937; padding: 1rem; border-radius: 9999px; transition: background-color 0.2s; }
+                .nav-btn:hover { background-color: #d1d5db; }
+                .nav-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+            `;
+            document.head.appendChild(style);
+        });
+    </script>
+</body>
+</html>
