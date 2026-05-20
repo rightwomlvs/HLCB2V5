@@ -1272,6 +1272,9 @@
                     } else if (!isReview) {
                         quizQueue.shift();
                         
+                        // 答對後立即更新進度條，讓最後一題能確實顯示 100% 滿格
+                        setProgress(wordsForCurrentMode.length - quizQueue.length, wordsForCurrentMode.length);
+                        
                         setTimeout(() => {
                             if (quizQueue.length > 0) {
                                 displayCard();
