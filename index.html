@@ -1555,6 +1555,8 @@
                     url.searchParams.set('data', base64Words);
                     if (start) url.searchParams.set('start', start);
                     if (end) url.searchParams.set('end', end);
+                    if (bookTitle) url.searchParams.set('book', bookTitle);
+                    if (lessonTitle) url.searchParams.set('lesson', lessonTitle);
                     if (isLocked) {
                         url.searchParams.set('lock', 'true');
                         if(randomQuestionsCheckbox.checked) {
@@ -1693,26 +1695,23 @@
                     }
                 }
                 
-                if (!loadedFromUrl) {
-                    const storedWords = localStorage.getItem('flashcards');
-                    if (storedWords && JSON.parse(storedWords).length > 0) {
-                        words = JSON.parse(storedWords).map(word => ({ ...word, proficiency: word.proficiency || 0, incorrectCount: word.incorrectCount || 0 }));
-                    } else {
-                        const defaultWords = [
-                            { english: 'yesterday (adv.)', chinese: '昨天' }, { english: 'study (v.)', chinese: '研讀' },
-                            { english: 'jog (v.)', chinese: '慢跑' }, { english: 'watch (v.)', chinese: '觀看' },
-                            { english: 'last (adj.)', chinese: '前一個的' }, { english: 'death (n.)', chinese: '死亡' },
-                            { english: 'a few (adj.)', chinese: '一些' }, { english: 'ago (adv.)', chinese: '以前' },
-                            { english: 'parents (n.)', chinese: '父母親' }, { english: 'were (v.)', chinese: '是 (複數/you/we/they)' },
-                            { english: 'was (v.)', chinese: '是 (單數/I/he/she)' }
-                        ];
-                        words = defaultWords.map(word => ({ ...word, proficiency: 0, incorrectCount: 0 }));
-                        saveWordsToStorage();
-                    }
+                const sharedBook = urlParams.get('book');
+                const sharedLesson = urlParams.get('lesson');
+
+                if (sharedBook) {
+                    bookTitle = sharedBook;
+                    localStorage.setItem('flashcardsBookTitle', bookTitle);
+                } else {
+                    bookTitle = localStorage.getItem('flashcardsBookTitle') || 'B3';
+                }
+
+                if (sharedLesson) {
+                    lessonTitle = sharedLesson;
+                    localStorage.setItem('flashcardsLessonTitle', lessonTitle);
+                } else {
+                    lessonTitle = localStorage.getItem('flashcardsLessonTitle') || 'L1';
                 }
                 
-                bookTitle = localStorage.getItem('flashcardsBookTitle') || 'B3';
-                lessonTitle = localStorage.getItem('flashcardsLessonTitle') || 'L1';
                 updateMainTitle();
                 
                 completionStatus = JSON.parse(localStorage.getItem('completionStatus')) || {};
