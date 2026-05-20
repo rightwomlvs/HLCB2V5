@@ -10,8 +10,6 @@
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
     <!-- 載入 QR Code 產生器 -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode-generator/qrcode.js"></script>
-    <!-- 載入 Tesseract.js 用於手寫辨識 -->
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         /* 定義閃卡的翻轉效果 */
         .flip-container {
@@ -287,7 +285,7 @@
                         ← 復原
                     </button>
                     <button type="button" id="hw-recognize-btn" class="flex-[2] bg-indigo-600 text-white py-2 rounded-lg font-semibold hover:bg-indigo-700 flex items-center justify-center gap-1 text-sm transition-colors shadow-sm">
-                        ✓ 辨識 (OCR)
+                        ✓ 辨識 (TrOCR)
                     </button>
                 </div>
                 <button type="button" id="hw-submit-btn" class="w-full bg-indigo-500 text-white py-3 rounded-xl font-bold text-lg hover:bg-indigo-600 shadow-md transition-all active:scale-95">
@@ -618,16 +616,32 @@
                 hwSubmitBtn.addEventListener('click', () => { checkAnswer(); });
 
                 hwRecognizeBtn.addEventListener('click', async () => {
-                    if (typeof Tesseract === 'undefined') {
-                        alert('辨識引擎尚未載入，請稍後再試。');
-                        return;
-                    }
-                    hwRecognizeBtn.textContent = '辨識中...';
+                    hwRecognizeBtn.textContent = '準備中...';
                     hwRecognizeBtn.disabled = true;
                     try {
+                        // 動態載入 Transformers.js 引擎 (只在第一次點擊時載入)
+                        if (!window.Transformers) {
+                            hwRecognizeBtn.textContent = '載入引擎...';
+                            const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers');
+                            // 停用本地模型，強制從 Hugging Face 下載
+                            env.allowLocalModels = false;
+                            window.Transformers = { pipeline };
+                        }
+
+                        // 初始化 TrOCR 模型
+                        // 注意：初次執行會下載約 100~200MB 的模型檔案，下載完會存在瀏覽器快取中
+                        if (!window.trocrPipeline) {
+                            hwRecognizeBtn.textContent = '初次下載AI模型(需稍候)...';
+                            window.trocrPipeline = await window.Transformers.pipeline('image-to-text', 'Xenova/trocr-small-handwritten');
+                        }
+
+                        hwRecognizeBtn.textContent = 'AI 辨識中...';
                         const dataUrl = hwCanvas.toDataURL('image/png');
-                        const result = await Tesseract.recognize(dataUrl, 'eng');
-                        const text = result.data.text.replace(/[^a-zA-Z\s]/g, '').trim().toLowerCase();
+                        const result = await window.trocrPipeline(dataUrl);
+                        
+                        // TrOCR 的回傳格式為 [{ generated_text: "辨識出的文字" }]
+                        const text = result[0].generated_text.replace(/[^a-zA-Z\s]/g, '').trim().toLowerCase();
+                        
                         if (text) {
                             answerInput.value = text;
                             const chip = document.createElement('button');
@@ -642,8 +656,9 @@
                         }
                     } catch (err) {
                         console.error('辨識錯誤:', err);
+                        alert('載入或辨識失敗，請檢查網路連線。首次載入模型需要較好的網路環境。');
                     } finally {
-                        hwRecognizeBtn.innerHTML = '✓ 辨識 (OCR)';
+                        hwRecognizeBtn.innerHTML = '✓ 辨識 (TrOCR)';
                         hwRecognizeBtn.disabled = false;
                     }
                 });
