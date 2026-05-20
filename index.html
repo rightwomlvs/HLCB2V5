@@ -10,6 +10,8 @@
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
     <!-- 載入 QR Code 產生器 -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode-generator/qrcode.js"></script>
+    <!-- 載入 Tesseract.js 用於手寫辨識 -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         /* 定義閃卡的翻轉效果 */
         .flip-container {
@@ -137,6 +139,10 @@
                         聽力測驗
                         <span class="crown-icon hidden absolute -top-2 -right-1 text-4xl" style="transform: rotate(15deg);">👑</span>
                     </button>
+                    <button data-mode="speak" class="mode-btn bg-fuchsia-500 hover:bg-fuchsia-600 relative sm:col-span-2">
+                        🗣️ 口說練習
+                        <span class="crown-icon hidden absolute -top-2 -right-1 text-4xl" style="transform: rotate(15deg);">👑</span>
+                    </button>
                 </div>
             </div>
 
@@ -235,7 +241,7 @@
             <div id="flashcard-container" class="flip-container w-full h-full transform transition-transform duration-300">
                 <div class="flipper w-full h-full">
                     <div class="front flex flex-col justify-center items-center">
-                        <span id="front-display" class="text-5xl font-bold text-center"></span>
+                        <span id="front-display" class="text-5xl font-bold text-center leading-tight"></span>
                         <div class="absolute bottom-6 right-6 flex items-center gap-2">
                             <button id="speak-slow-btn" class="speak-btn p-4 rounded-full bg-white/30 hover:bg-white/50 transition-colors hidden">
                                 <span class="h-8 w-8 flex items-center justify-center text-white text-2xl font-bold">慢</span>
@@ -248,7 +254,7 @@
                         </div>
                     </div>
                     <div class="back flex flex-col justify-center items-center">
-                        <span id="back-display" class="text-3xl font-light text-center px-4"></span>
+                        <span id="back-display" class="text-3xl font-light text-center px-4 leading-tight"></span>
                     </div>
                 </div>
             </div>
@@ -263,7 +269,7 @@
         <!-- 測驗區塊 -->
         <div id="quiz-container" class="w-full max-w-md mt-4 flex flex-col gap-3">
             <form id="quiz-form" class="flex items-center gap-2">
-                <input id="answer-input" type="text" class="w-full p-4 border-2 border-indigo-200 rounded-xl text-lg focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 text-indigo-700 bg-indigo-50/30 font-semibold" placeholder="請輸入答案...">
+                <input id="answer-input" type="text" class="w-full p-4 border-2 border-indigo-200 rounded-xl text-lg focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 text-indigo-700 bg-indigo-50/30 font-semibold transition-all" placeholder="請輸入答案...">
                 <button type="submit" id="normal-submit-btn" class="bg-indigo-600 text-white p-4 rounded-xl hover:bg-indigo-700 shrink-0 disabled:bg-indigo-300 disabled:cursor-not-allowed">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
                 </button>
@@ -277,18 +283,33 @@
                 
                 <div id="recognized-chips" class="flex flex-wrap gap-2 empty:hidden justify-start"></div>
 
-                <div class="flex gap-2">
-                    <button type="button" id="hw-clear-btn" class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-300 flex items-center justify-center gap-1 text-sm transition-colors">
-                        🗑️ 重寫
+                <div class="grid grid-cols-2 gap-2">
+                    <button type="button" id="hw-undo-btn" class="bg-amber-100 text-amber-800 py-2 rounded-lg font-semibold hover:bg-amber-200 flex items-center justify-center gap-1 text-sm transition-colors">
+                        ← 復原筆畫
                     </button>
-                    <button type="button" id="hw-undo-btn" class="flex-1 bg-amber-100 text-amber-800 py-2 rounded-lg font-semibold hover:bg-amber-200 flex items-center justify-center gap-1 text-sm transition-colors">
-                        ← 復原
+                    <button type="button" id="hw-clear-btn" class="bg-gray-200 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-300 flex items-center justify-center gap-1 text-sm transition-colors">
+                        🗑️ 清空畫布
                     </button>
-                    <button type="button" id="hw-recognize-btn" class="flex-[2] bg-indigo-600 text-white py-2 rounded-lg font-semibold hover:bg-indigo-700 flex items-center justify-center gap-1 text-sm transition-colors shadow-sm">
-                        ✓ 辨識 (TrOCR)
+                    <button type="button" id="hw-del-word-btn" class="bg-rose-100 text-rose-800 py-2 rounded-lg font-semibold hover:bg-rose-200 flex items-center justify-center gap-1 text-sm transition-colors">
+                        ⌫ 刪除一字
+                    </button>
+                    <button type="button" id="hw-recognize-btn" class="bg-indigo-600 text-white py-2 rounded-lg font-semibold hover:bg-indigo-700 flex items-center justify-center gap-1 text-sm transition-colors shadow-sm">
+                        ✓ 辨識接續
                     </button>
                 </div>
-                <button type="button" id="hw-submit-btn" class="w-full bg-indigo-500 text-white py-3 rounded-xl font-bold text-lg hover:bg-indigo-600 shadow-md transition-all active:scale-95">
+                <button type="button" id="hw-submit-btn" class="w-full bg-indigo-500 text-white py-3 rounded-xl font-bold text-lg hover:bg-indigo-600 shadow-md transition-all active:scale-95 mt-1">
+                    提交答案
+                </button>
+            </div>
+
+            <!-- 語音辨識區塊 -->
+            <div id="speaking-area" class="hidden flex-col items-center justify-center gap-3 w-full mt-2">
+                <button type="button" id="mic-btn" class="w-20 h-20 bg-fuchsia-500 text-white rounded-full flex items-center justify-center text-4xl shadow-lg hover:bg-fuchsia-600 transition-all focus:outline-none focus:ring-4 focus:ring-fuchsia-300">
+                    🎤
+                </button>
+                <p id="speech-status" class="text-gray-500 text-sm font-semibold h-5">點擊上方麥克風，唸出英文單字</p>
+                <!-- 新增提交按鈕 -->
+                <button type="button" id="speak-submit-btn" class="w-full bg-indigo-500 text-white py-3 rounded-xl font-bold text-lg hover:bg-indigo-600 shadow-md transition-all active:scale-95 mt-1">
                     提交答案
                 </button>
             </div>
@@ -488,9 +509,16 @@
             const hwCtx = hwCanvas?.getContext('2d', { willReadFrequently: true });
             const hwClearBtn = document.getElementById('hw-clear-btn');
             const hwUndoBtn = document.getElementById('hw-undo-btn');
+            const hwDelWordBtn = document.getElementById('hw-del-word-btn');
             const hwRecognizeBtn = document.getElementById('hw-recognize-btn');
             const hwSubmitBtn = document.getElementById('hw-submit-btn');
             const recognizedChips = document.getElementById('recognized-chips');
+
+            // 語音辨識相關
+            const speakingArea = document.getElementById('speaking-area');
+            const micBtn = document.getElementById('mic-btn');
+            const speechStatus = document.getElementById('speech-status');
+            const speakSubmitBtn = document.getElementById('speak-submit-btn'); // 綁定新按鈕
 
             // 複習模式導覽
             const reviewNavContainer = document.getElementById('review-nav-container');
@@ -537,6 +565,72 @@
             const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
             const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
 
+            // --- 語音辨識 (Speech Recognition) 設定 ---
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            let recognition = null;
+            let isListening = false;
+
+            if (SpeechRecognition) {
+                recognition = new SpeechRecognition();
+                recognition.lang = 'en-US';
+                recognition.interimResults = false;
+                recognition.maxAlternatives = 1;
+
+                recognition.onstart = () => {
+                    isListening = true;
+                    micBtn.classList.remove('bg-fuchsia-500');
+                    micBtn.classList.add('bg-red-500', 'animate-pulse');
+                    speechStatus.textContent = '聆聽中... 請唸出上方單字';
+                    answerInput.placeholder = '聆聽中...';
+                    answerInput.value = '';
+                };
+
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    answerInput.value = transcript;
+                    speechStatus.textContent = '可直接提交，或點擊輸入框修改';
+                    // 移除自動呼叫 checkAnswer(); 讓使用者手動送出
+                };
+
+                recognition.onerror = (event) => {
+                    console.error('語音辨識錯誤:', event.error);
+                    answerInput.placeholder = '無法辨識或未授權麥克風';
+                    speechStatus.textContent = '發生錯誤，請重試';
+                    micBtn.classList.add('bg-fuchsia-500');
+                    micBtn.classList.remove('bg-red-500', 'animate-pulse');
+                };
+
+                recognition.onend = () => {
+                    isListening = false;
+                    micBtn.classList.add('bg-fuchsia-500');
+                    micBtn.classList.remove('bg-red-500', 'animate-pulse');
+                    if(!answerInput.value) {
+                        speechStatus.textContent = '點擊上方麥克風，唸出英文單字';
+                        answerInput.placeholder = '等待語音輸入...';
+                    } else {
+                        speechStatus.textContent = '可直接提交，或點擊輸入框修改';
+                    }
+                };
+                
+                micBtn.addEventListener('click', () => {
+                    if (currentMode === 'speak') {
+                        try {
+                            if (isListening) {
+                                recognition.stop();
+                            } else {
+                                recognition.start();
+                            }
+                        } catch (e) {
+                            console.warn('語音辨識發生異常:', e);
+                        }
+                    }
+                });
+            } else {
+                micBtn.addEventListener('click', () => {
+                    alert('您的瀏覽器不支援語音辨識功能，請使用 Google Chrome、Edge 或 Safari。');
+                });
+            }
+
             // --- 手寫畫布邏輯 ---
             let hwDrawing = false;
             let hwHistory = [];
@@ -547,13 +641,13 @@
                 hwHistory.push(hwCtx.getImageData(0, 0, hwCanvas.width, hwCanvas.height));
             };
 
-            const clearHwCanvas = () => {
+            const clearHwCanvas = (clearChips = true) => {
                 if(!hwCtx) return;
                 hwCtx.fillStyle = '#ffffff';
                 hwCtx.fillRect(0, 0, hwCanvas.width, hwCanvas.height);
                 hwHistory = [];
                 saveHwHistory();
-                recognizedChips.innerHTML = '';
+                if (clearChips) recognizedChips.innerHTML = '';
             };
 
             const undoHwCanvas = () => {
@@ -611,9 +705,23 @@
                 hwCanvas.addEventListener('touchmove', drawHw, {passive: false});
                 window.addEventListener('touchend', endHwDrawing);
                 
-                hwClearBtn.addEventListener('click', clearHwCanvas);
+                hwClearBtn.addEventListener('click', () => clearHwCanvas(true));
                 hwUndoBtn.addEventListener('click', undoHwCanvas);
                 hwSubmitBtn.addEventListener('click', () => { checkAnswer(); });
+                // 綁定新按鈕的送出事件
+                if (speakSubmitBtn) speakSubmitBtn.addEventListener('click', () => { checkAnswer(); });
+
+                hwDelWordBtn.addEventListener('click', () => {
+                    const currentVal = answerInput.value.trim();
+                    if (currentVal) {
+                        const words = currentVal.split(/\s+/);
+                        words.pop();
+                        answerInput.value = words.join(' ');
+                    }
+                    if (recognizedChips.lastChild) {
+                        recognizedChips.removeChild(recognizedChips.lastChild);
+                    }
+                });
 
                 hwRecognizeBtn.addEventListener('click', async () => {
                     hwRecognizeBtn.textContent = '準備中...';
@@ -643,16 +751,29 @@
                         const text = result[0].generated_text.replace(/[^a-zA-Z\s]/g, '').trim().toLowerCase();
                         
                         if (text) {
-                            answerInput.value = text;
+                            // 自動接續模式：如果已經有字，就加個空白接在後面
+                            let currentVal = answerInput.value.trim();
+                            if (currentVal) {
+                                answerInput.value = currentVal + ' ' + text;
+                            } else {
+                                answerInput.value = text;
+                            }
+
                             const chip = document.createElement('button');
                             chip.className = 'bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm hover:bg-indigo-200 transition-colors shadow-sm';
                             chip.textContent = text;
                             chip.onclick = () => { answerInput.value = text; };
                             recognizedChips.appendChild(chip);
+                            
+                            // 辨識成功後，自動清空畫布，方便使用者寫下一個字 (保留上方的提示 Chip)
+                            clearHwCanvas(false);
                         } else {
-                            answerInput.value = '';
-                            answerInput.placeholder = '無法辨識，請重寫';
-                            setTimeout(() => answerInput.placeholder = '請輸入答案...', 2000);
+                            feedbackDisplay.textContent = '無法辨識，請重寫！';
+                            feedbackDisplay.classList.add('text-red-500');
+                            setTimeout(() => { 
+                                feedbackDisplay.textContent = ''; 
+                                feedbackDisplay.classList.remove('text-red-500'); 
+                            }, 2000);
                         }
                     } catch (err) {
                         console.error('辨識錯誤:', err);
@@ -731,6 +852,7 @@
             const modeDetails = {
                 'review': { title: '複習模式' }, 'zh-en': { title: '中翻英測驗' },
                 'en-zh': { title: '英翻中測驗' }, 'listen': { title: '聽力測驗' },
+                'speak': { title: '口說練習' },
                 'speed': { title: '極速挑戰' }, 'hard': { title: '困難單字複習' },
             };
 
@@ -861,6 +983,11 @@
 
             // --- 學習模式核心邏輯 ---
             const displayCard = () => {
+                // 如果語音辨識還在開著，切換題目時關閉它
+                if (recognition && isListening) {
+                    try { recognition.stop(); } catch(e) {}
+                }
+
                 if (wordsForCurrentMode.length === 0 && quizQueue.length === 0) return;
 
                 const updateCardContent = () => {
@@ -888,34 +1015,57 @@
                     answerInput.disabled = false;
                     normalSubmitBtn.disabled = false;
                     if(hwSubmitBtn) hwSubmitBtn.disabled = false;
+                    if(speakSubmitBtn) speakSubmitBtn.disabled = false;
                     wrongAnswerFeedback.classList.add('hidden');
                     quizContainer.classList.remove('hidden');
                     speedResultView.classList.add('hidden');
                     hintDisplay.textContent = '';
                     hintBtn.disabled = false;
 
-                    // 處理手寫面板的顯示與隱藏
-                    const isHandwritingMode = (currentMode === 'zh-en' || (currentMode === 'speed' && currentSpeedQuestionType === 'zh-en'));
+                    // 處理不同模式的面板切換
+                    const isHandwritingMode = (currentMode === 'zh-en' || currentMode === 'hard' || (currentMode === 'speed' && currentSpeedQuestionType === 'zh-en'));
+                    const isSpeakMode = (currentMode === 'speak');
+
                     if (isHandwritingMode) {
                         handwritingArea.classList.remove('hidden');
                         handwritingArea.classList.add('flex');
+                        speakingArea.classList.add('hidden');
+                        speakingArea.classList.remove('flex');
                         normalSubmitBtn.classList.add('hidden');
+                        answerInput.placeholder = '請在下方手寫英文...';
+                        answerInput.readOnly = false;
+                        answerInput.classList.remove('bg-gray-100');
                         setTimeout(() => {
                             if(hwCanvas) {
                                 const rect = hwCanvas.parentElement.getBoundingClientRect();
                                 if(rect.width > 0 && (hwCanvas.width !== rect.width || hwCanvas.height !== rect.height)) {
                                     hwCanvas.width = rect.width;
                                     hwCanvas.height = rect.height;
-                                    clearHwCanvas();
+                                    clearHwCanvas(true);
                                 } else {
-                                    clearHwCanvas();
+                                    clearHwCanvas(true);
                                 }
                             }
                         }, 50);
+                    } else if (isSpeakMode) {
+                        handwritingArea.classList.add('hidden');
+                        handwritingArea.classList.remove('flex');
+                        speakingArea.classList.remove('hidden');
+                        speakingArea.classList.add('flex');
+                        normalSubmitBtn.classList.add('hidden');
+                        answerInput.placeholder = '等待語音輸入或手動修改...';
+                        answerInput.readOnly = false; // 取消唯讀，允許手動編輯
+                        answerInput.classList.remove('bg-gray-100'); // 恢復正常背景色
+                        speechStatus.textContent = '點擊上方麥克風，唸出英文單字';
                     } else {
                         handwritingArea.classList.add('hidden');
                         handwritingArea.classList.remove('flex');
+                        speakingArea.classList.add('hidden');
+                        speakingArea.classList.remove('flex');
                         normalSubmitBtn.classList.remove('hidden');
+                        answerInput.placeholder = '請輸入答案...';
+                        answerInput.readOnly = false;
+                        answerInput.classList.remove('bg-gray-100');
                     }
 
                     let frontText, backText;
@@ -946,11 +1096,18 @@
                                 frontText = '請聽發音'; backText = card.english;
                                 [speakBtn, speakSlowBtn].forEach(btn => btn.classList.remove('hidden'));
                                 speakWord(card.english, 0.75); break;
+                            case 'speak':
+                                // 口說練習：顯示英文，讓學生看著唸
+                                frontText = card.english; backText = card.chinese;
+                                [speakBtn, speakSlowBtn].forEach(btn => btn.classList.remove('hidden')); break;
                         }
                     }
                     frontDisplay.textContent = frontText;
                     backDisplay.textContent = backText;
-                    setTimeout(() => answerInput.focus(), 100);
+                    // 如果不是口說模式，就自動把焦點放到輸入框
+                    if (!isSpeakMode) {
+                        setTimeout(() => answerInput.focus(), 100);
+                    }
                 };
                 
                 if (flashcardContainer.classList.contains('flipped')) {
@@ -1060,7 +1217,7 @@
                     if (isSpeed) effectiveMode = currentSpeedQuestionType;
                     if (currentMode === 'hard') effectiveMode = 'zh-en';
                     switch (effectiveMode) {
-                        case 'zh-en': case 'listen':
+                        case 'zh-en': case 'listen': case 'speak':
                             correctAnswer = card.english.split('(')[0].trim();
                             answerLang = 'en';
                             break;
@@ -1075,18 +1232,30 @@
                 if (answerLang === 'en') {
                     const normalize = (str) => str.toLowerCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "").trim();
                     isCorrect = normalize(userAnswer) === normalize(correctAnswer);
+                    
+                    // 語音辨識容錯機制：
+                    // 部分手機系統會忽略 en-US 設定，將聽到的英文強制翻譯為中文輸出。
+                    // 若判讀結果為中文翻譯，我們也判定為答對，並將畫面文字自動修正回英文。
+                    if (!isCorrect && currentMode === 'speak') {
+                        const possibleChinese = card.chinese.split(/[;；]/).map(a => a.trim());
+                        if (possibleChinese.some(ans => userAnswer.includes(ans) && ans !== '')) {
+                            isCorrect = true;
+                            answerInput.value = correctAnswer; // 將輸入框內的中文替換回正確英文
+                        }
+                    }
                 } else if (answerLang === 'zh') {
                     const possibleAnswers = correctAnswer.split(/[;；]/).map(a => a.trim()); 
                     isCorrect = possibleAnswers.some(ans => userAnswer.trim().includes(ans) && ans !== '');
                 }
                 
                 if (isCorrect) {
-                    correctSound.play().catch(e => console.warn('無法播放音效:', e));
-                    answerInput.disabled = true;
-                    normalSubmitBtn.disabled = true;
-                    if (hwSubmitBtn) hwSubmitBtn.disabled = true;
-                    feedbackDisplay.textContent = '答對了！';
-                    feedbackDisplay.classList.remove('text-red-500');
+                correctSound.play().catch(e => console.warn('無法播放音效:', e));
+                answerInput.disabled = true;
+                normalSubmitBtn.disabled = true;
+                if (hwSubmitBtn) hwSubmitBtn.disabled = true;
+                if (speakSubmitBtn) speakSubmitBtn.disabled = true;
+                feedbackDisplay.textContent = '答對了！';
+                feedbackDisplay.classList.remove('text-red-500');
                     feedbackDisplay.classList.add('text-green-600');
                     triggerConfetti();
                     
@@ -1114,18 +1283,19 @@
                                     updateCompletionUI();
                                 }
                                 answerInput.disabled = true;
-                                submitBtn.disabled = true;
+                                if(normalSubmitBtn) normalSubmitBtn.disabled = true;
                             }
                         }, 1500);
                     }
                     
                     if (isReview) {
-                        answerInput.disabled = false;
-                        normalSubmitBtn.disabled = false;
-                        if (hwSubmitBtn) hwSubmitBtn.disabled = false;
-                    }
-                } else { // Incorrect answer
-                    wrongSound.play().catch(e => console.warn('無法播放音效:', e));
+                    answerInput.disabled = false;
+                    normalSubmitBtn.disabled = false;
+                    if (hwSubmitBtn) hwSubmitBtn.disabled = false;
+                    if (speakSubmitBtn) speakSubmitBtn.disabled = false;
+                }
+            } else { // Incorrect answer
+                wrongSound.play().catch(e => console.warn('無法播放音效:', e));
                     quizIncorrectCount++; 
                     updateHintButtonVisibility();
                     answerInput.classList.add('shake');
@@ -1147,11 +1317,12 @@
                         }
                         setTimeout(() => { answerInput.classList.remove('shake'); }, 820);
                     } else { // Other quiz modes
-                        answerInput.disabled = true;
-                        normalSubmitBtn.disabled = true;
-                        if (hwSubmitBtn) hwSubmitBtn.disabled = true;
-                        flashcardContainer.classList.add('flipped'); 
-                        quizContainer.classList.add('hidden');
+                    answerInput.disabled = true;
+                    normalSubmitBtn.disabled = true;
+                    if (hwSubmitBtn) hwSubmitBtn.disabled = true;
+                    if (speakSubmitBtn) speakSubmitBtn.disabled = true;
+                    flashcardContainer.classList.add('flipped'); 
+                    quizContainer.classList.add('hidden');
                         wrongAnswerFeedback.classList.remove('hidden');
                         setTimeout(() => { answerInput.classList.remove('shake'); }, 820);
                     }
@@ -1205,12 +1376,13 @@
             };
 
             const endSpeedChallenge = () => {
-                clearInterval(timerInterval);
-                answerInput.disabled = true; 
-                normalSubmitBtn.disabled = true;
-                if(hwSubmitBtn) hwSubmitBtn.disabled = true;
-                quizContainer.classList.add('hidden'); speedResultView.classList.remove('hidden');
-                finalScore.textContent = currentScore;
+            clearInterval(timerInterval);
+            answerInput.disabled = true; 
+            normalSubmitBtn.disabled = true;
+            if(hwSubmitBtn) hwSubmitBtn.disabled = true;
+            if(speakSubmitBtn) speakSubmitBtn.disabled = true;
+            quizContainer.classList.add('hidden'); speedResultView.classList.remove('hidden');
+            finalScore.textContent = currentScore;
                 
                 if(currentScore > highScore) {
                     highScore = currentScore;
@@ -1279,7 +1451,13 @@
             document.querySelectorAll('.mode-btn[data-mode]').forEach(btn => {
                 btn.addEventListener('click', () => setupLearningView(btn.dataset.mode));
             });
-            backToMenuBtn.addEventListener('click', () => { clearInterval(timerInterval); showView('menu'); });
+            backToMenuBtn.addEventListener('click', () => { 
+                clearInterval(timerInterval); 
+                if (recognition && isListening) {
+                    try { recognition.stop(); } catch(e) {}
+                }
+                showView('menu'); 
+            });
             
             flashcardContainer.addEventListener('click', () => {
                 if (currentMode === 'review') {
@@ -1303,7 +1481,7 @@
                 const questionType = currentMode === 'speed' ? currentSpeedQuestionType : (currentMode === 'hard' ? 'zh-en' : currentMode);
                 let correctAnswer;
                 switch (questionType) {
-                    case 'zh-en': case 'listen': correctAnswer = card.english.split('(')[0].trim(); break;
+                    case 'zh-en': case 'listen': case 'speak': correctAnswer = card.english.split('(')[0].trim(); break;
                     case 'en-zh': correctAnswer = card.chinese.split('(')[0].trim(); break;
                     default: return;
                 }
