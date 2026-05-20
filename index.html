@@ -1555,6 +1555,8 @@
                     url.searchParams.set('data', base64Words);
                     if (start) url.searchParams.set('start', start);
                     if (end) url.searchParams.set('end', end);
+                    if (bookTitle) url.searchParams.set('book', bookTitle);
+                    if (lessonTitle) url.searchParams.set('lesson', lessonTitle);
                     if (isLocked) {
                         url.searchParams.set('lock', 'true');
                         if(randomQuestionsCheckbox.checked) {
@@ -1711,8 +1713,23 @@
                     }
                 }
                 
-                bookTitle = localStorage.getItem('flashcardsBookTitle') || 'B3';
-                lessonTitle = localStorage.getItem('flashcardsLessonTitle') || 'L1';
+                const sharedBook = urlParams.get('book');
+                const sharedLesson = urlParams.get('lesson');
+
+                if (sharedBook) {
+                    bookTitle = sharedBook;
+                    localStorage.setItem('flashcardsBookTitle', bookTitle);
+                } else {
+                    bookTitle = localStorage.getItem('flashcardsBookTitle') || 'B3';
+                }
+
+                if (sharedLesson) {
+                    lessonTitle = sharedLesson;
+                    localStorage.setItem('flashcardsLessonTitle', lessonTitle);
+                } else {
+                    lessonTitle = localStorage.getItem('flashcardsLessonTitle') || 'L1';
+                }
+                
                 updateMainTitle();
                 
                 completionStatus = JSON.parse(localStorage.getItem('completionStatus')) || {};
