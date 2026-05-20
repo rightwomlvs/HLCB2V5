@@ -10,6 +10,8 @@
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
     <!-- 載入 QR Code 產生器 -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode-generator/qrcode.js"></script>
+    <!-- 載入 Tesseract.js 用於手寫辨識 -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         /* 定義閃卡的翻轉效果 */
         .flip-container {
@@ -261,14 +263,39 @@
         </div>
         
         <!-- 測驗區塊 -->
-        <div id="quiz-container" class="w-full max-w-md mt-4">
+        <div id="quiz-container" class="w-full max-w-md mt-4 flex flex-col gap-3">
             <form id="quiz-form" class="flex items-center gap-2">
-                <input id="answer-input" type="text" class="w-full p-4 border border-gray-300 rounded-full text-lg focus:ring-4 focus:ring-indigo-200 focus:border-indigo-500" placeholder="請輸入答案...">
-                <button type="submit" class="bg-indigo-600 text-white p-4 rounded-full hover:bg-indigo-700 shrink-0 disabled:bg-indigo-300 disabled:cursor-not-allowed">
+                <input id="answer-input" type="text" class="w-full p-4 border-2 border-indigo-200 rounded-xl text-lg focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 text-indigo-700 bg-indigo-50/30 font-semibold" placeholder="請輸入答案...">
+                <button type="submit" id="normal-submit-btn" class="bg-indigo-600 text-white p-4 rounded-xl hover:bg-indigo-700 shrink-0 disabled:bg-indigo-300 disabled:cursor-not-allowed">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
                 </button>
             </form>
-            <div id="feedback-display" class="text-center mt-3 h-6 font-semibold"></div>
+            
+            <!-- 手寫辨識區塊 -->
+            <div id="handwriting-area" class="hidden flex-col gap-3 w-full">
+                <div class="relative w-full aspect-[2/1] border-2 border-dashed border-indigo-400 rounded-xl overflow-hidden bg-white shadow-inner">
+                    <canvas id="handwriting-canvas" class="absolute top-0 left-0 w-full h-full touch-none cursor-crosshair"></canvas>
+                </div>
+                
+                <div id="recognized-chips" class="flex flex-wrap gap-2 empty:hidden justify-start"></div>
+
+                <div class="flex gap-2">
+                    <button type="button" id="hw-clear-btn" class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-300 flex items-center justify-center gap-1 text-sm transition-colors">
+                        🗑️ 重寫
+                    </button>
+                    <button type="button" id="hw-undo-btn" class="flex-1 bg-amber-100 text-amber-800 py-2 rounded-lg font-semibold hover:bg-amber-200 flex items-center justify-center gap-1 text-sm transition-colors">
+                        ← 復原
+                    </button>
+                    <button type="button" id="hw-recognize-btn" class="flex-[2] bg-indigo-600 text-white py-2 rounded-lg font-semibold hover:bg-indigo-700 flex items-center justify-center gap-1 text-sm transition-colors shadow-sm">
+                        ✓ 辨識 (OCR)
+                    </button>
+                </div>
+                <button type="button" id="hw-submit-btn" class="w-full bg-indigo-500 text-white py-3 rounded-xl font-bold text-lg hover:bg-indigo-600 shadow-md transition-all active:scale-95">
+                    提交答案
+                </button>
+            </div>
+
+            <div id="feedback-display" class="text-center mt-1 h-6 font-semibold"></div>
         </div>
 
         <!-- 答錯確認區塊 (間隔重複模式使用) -->
@@ -449,7 +476,7 @@
             const quizContainer = document.getElementById('quiz-container');
             const quizForm = document.getElementById('quiz-form');
             const answerInput = document.getElementById('answer-input');
-            const submitBtn = quizForm.querySelector('button[type="submit"]');
+            const normalSubmitBtn = document.getElementById('normal-submit-btn');
             const feedbackDisplay = document.getElementById('feedback-display');
             const wrongAnswerFeedback = document.getElementById('wrong-answer-feedback');
             const confirmWrongBtn = document.getElementById('confirm-wrong-btn');
@@ -457,6 +484,16 @@
             const hintBtn = document.getElementById('hint-btn');
             const hintDisplay = document.getElementById('hint-display');
             
+            // 手寫辨識相關
+            const handwritingArea = document.getElementById('handwriting-area');
+            const hwCanvas = document.getElementById('handwriting-canvas');
+            const hwCtx = hwCanvas?.getContext('2d', { willReadFrequently: true });
+            const hwClearBtn = document.getElementById('hw-clear-btn');
+            const hwUndoBtn = document.getElementById('hw-undo-btn');
+            const hwRecognizeBtn = document.getElementById('hw-recognize-btn');
+            const hwSubmitBtn = document.getElementById('hw-submit-btn');
+            const recognizedChips = document.getElementById('recognized-chips');
+
             // 複習模式導覽
             const reviewNavContainer = document.getElementById('review-nav-container');
             const prevBtn = document.getElementById('prev-btn');
@@ -501,6 +538,116 @@
             const wordToDeleteSpan = document.getElementById('word-to-delete');
             const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
             const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+
+            // --- 手寫畫布邏輯 ---
+            let hwDrawing = false;
+            let hwHistory = [];
+
+            const saveHwHistory = () => {
+                if(!hwCtx) return;
+                if (hwHistory.length > 10) hwHistory.shift();
+                hwHistory.push(hwCtx.getImageData(0, 0, hwCanvas.width, hwCanvas.height));
+            };
+
+            const clearHwCanvas = () => {
+                if(!hwCtx) return;
+                hwCtx.fillStyle = '#ffffff';
+                hwCtx.fillRect(0, 0, hwCanvas.width, hwCanvas.height);
+                hwHistory = [];
+                saveHwHistory();
+                recognizedChips.innerHTML = '';
+            };
+
+            const undoHwCanvas = () => {
+                if(!hwCtx) return;
+                if (hwHistory.length > 1) {
+                    hwHistory.pop();
+                    hwCtx.putImageData(hwHistory[hwHistory.length - 1], 0, 0);
+                } else if (hwHistory.length === 1) {
+                    clearHwCanvas();
+                }
+            };
+
+            const startHwDrawing = (e) => {
+                hwDrawing = true;
+                drawHw(e);
+            };
+
+            const endHwDrawing = () => {
+                if (!hwDrawing) return;
+                hwDrawing = false;
+                if(hwCtx) hwCtx.beginPath();
+                saveHwHistory();
+            };
+
+            const drawHw = (e) => {
+                if (!hwDrawing || !hwCtx) return;
+                e.preventDefault();
+                const rect = hwCanvas.getBoundingClientRect();
+                let clientX = e.clientX;
+                let clientY = e.clientY;
+                if (e.touches && e.touches.length > 0) {
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                }
+                const x = clientX - rect.left;
+                const y = clientY - rect.top;
+                
+                hwCtx.lineWidth = 6;
+                hwCtx.lineCap = 'round';
+                hwCtx.lineJoin = 'round';
+                hwCtx.strokeStyle = '#000000';
+                
+                hwCtx.lineTo(x, y);
+                hwCtx.stroke();
+                hwCtx.beginPath();
+                hwCtx.moveTo(x, y);
+            };
+
+            if (hwCanvas) {
+                hwCanvas.addEventListener('mousedown', startHwDrawing);
+                hwCanvas.addEventListener('mousemove', drawHw);
+                window.addEventListener('mouseup', endHwDrawing);
+                
+                hwCanvas.addEventListener('touchstart', startHwDrawing, {passive: false});
+                hwCanvas.addEventListener('touchmove', drawHw, {passive: false});
+                window.addEventListener('touchend', endHwDrawing);
+                
+                hwClearBtn.addEventListener('click', clearHwCanvas);
+                hwUndoBtn.addEventListener('click', undoHwCanvas);
+                hwSubmitBtn.addEventListener('click', () => { checkAnswer(); });
+
+                hwRecognizeBtn.addEventListener('click', async () => {
+                    if (typeof Tesseract === 'undefined') {
+                        alert('辨識引擎尚未載入，請稍後再試。');
+                        return;
+                    }
+                    hwRecognizeBtn.textContent = '辨識中...';
+                    hwRecognizeBtn.disabled = true;
+                    try {
+                        const dataUrl = hwCanvas.toDataURL('image/png');
+                        const result = await Tesseract.recognize(dataUrl, 'eng');
+                        const text = result.data.text.replace(/[^a-zA-Z\s]/g, '').trim().toLowerCase();
+                        if (text) {
+                            answerInput.value = text;
+                            const chip = document.createElement('button');
+                            chip.className = 'bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm hover:bg-indigo-200 transition-colors shadow-sm';
+                            chip.textContent = text;
+                            chip.onclick = () => { answerInput.value = text; };
+                            recognizedChips.appendChild(chip);
+                        } else {
+                            answerInput.value = '';
+                            answerInput.placeholder = '無法辨識，請重寫';
+                            setTimeout(() => answerInput.placeholder = '請輸入答案...', 2000);
+                        }
+                    } catch (err) {
+                        console.error('辨識錯誤:', err);
+                    } finally {
+                        hwRecognizeBtn.innerHTML = '✓ 辨識 (OCR)';
+                        hwRecognizeBtn.disabled = false;
+                    }
+                });
+            }
 
             // --- 內建合成音效設定 (取代外部 mp3 檔案) ---
             const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -724,12 +871,37 @@
                     feedbackDisplay.textContent = '';
                     answerInput.value = '';
                     answerInput.disabled = false;
-                    submitBtn.disabled = false;
+                    normalSubmitBtn.disabled = false;
+                    if(hwSubmitBtn) hwSubmitBtn.disabled = false;
                     wrongAnswerFeedback.classList.add('hidden');
                     quizContainer.classList.remove('hidden');
                     speedResultView.classList.add('hidden');
                     hintDisplay.textContent = '';
                     hintBtn.disabled = false;
+
+                    // 處理手寫面板的顯示與隱藏
+                    const isHandwritingMode = (currentMode === 'zh-en' || (currentMode === 'speed' && currentSpeedQuestionType === 'zh-en'));
+                    if (isHandwritingMode) {
+                        handwritingArea.classList.remove('hidden');
+                        handwritingArea.classList.add('flex');
+                        normalSubmitBtn.classList.add('hidden');
+                        setTimeout(() => {
+                            if(hwCanvas) {
+                                const rect = hwCanvas.parentElement.getBoundingClientRect();
+                                if(rect.width > 0 && (hwCanvas.width !== rect.width || hwCanvas.height !== rect.height)) {
+                                    hwCanvas.width = rect.width;
+                                    hwCanvas.height = rect.height;
+                                    clearHwCanvas();
+                                } else {
+                                    clearHwCanvas();
+                                }
+                            }
+                        }, 50);
+                    } else {
+                        handwritingArea.classList.add('hidden');
+                        handwritingArea.classList.remove('flex');
+                        normalSubmitBtn.classList.remove('hidden');
+                    }
 
                     let frontText, backText;
                     
@@ -896,7 +1068,8 @@
                 if (isCorrect) {
                     correctSound.play().catch(e => console.warn('無法播放音效:', e));
                     answerInput.disabled = true;
-                    submitBtn.disabled = true;
+                    normalSubmitBtn.disabled = true;
+                    if (hwSubmitBtn) hwSubmitBtn.disabled = true;
                     feedbackDisplay.textContent = '答對了！';
                     feedbackDisplay.classList.remove('text-red-500');
                     feedbackDisplay.classList.add('text-green-600');
@@ -933,7 +1106,8 @@
                     
                     if (isReview) {
                         answerInput.disabled = false;
-                        submitBtn.disabled = false;
+                        normalSubmitBtn.disabled = false;
+                        if (hwSubmitBtn) hwSubmitBtn.disabled = false;
                     }
                 } else { // Incorrect answer
                     wrongSound.play().catch(e => console.warn('無法播放音效:', e));
@@ -959,7 +1133,8 @@
                         setTimeout(() => { answerInput.classList.remove('shake'); }, 820);
                     } else { // Other quiz modes
                         answerInput.disabled = true;
-                        submitBtn.disabled = true;
+                        normalSubmitBtn.disabled = true;
+                        if (hwSubmitBtn) hwSubmitBtn.disabled = true;
                         flashcardContainer.classList.add('flipped'); 
                         quizContainer.classList.add('hidden');
                         wrongAnswerFeedback.classList.remove('hidden');
@@ -1016,7 +1191,9 @@
 
             const endSpeedChallenge = () => {
                 clearInterval(timerInterval);
-                answerInput.disabled = true; submitBtn.disabled = true;
+                answerInput.disabled = true; 
+                normalSubmitBtn.disabled = true;
+                if(hwSubmitBtn) hwSubmitBtn.disabled = true;
                 quizContainer.classList.add('hidden'); speedResultView.classList.remove('hidden');
                 finalScore.textContent = currentScore;
                 
